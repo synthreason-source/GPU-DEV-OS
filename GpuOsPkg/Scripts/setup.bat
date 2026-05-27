@@ -7,21 +7,21 @@
 setlocal enabledelayedexpansion
 
 echo.
-echo  ============================================================
-echo   GpuOS Development Environment Setup
-echo   Installs: Python, LLVM/Clang, NASM, Git, EDK2
-echo  ============================================================
+echo ============================================================
+echo GpuOS Development Environment Setup
+echo Installs: Python, LLVM/Clang, NASM, Git, EDK2
+echo ============================================================
 echo.
 
 :: ── Resolve this script's own location ──────────────────────────────
-:: Script lives at: <anywhere>\GpuOsPkg\Scripts\setup.bat
+:: Script lives at: \GpuOsPkg\Scripts\setup.bat
 :: GpuOsPkg root is one level up from Scripts\
 pushd "%~dp0.."
 set GPUOS_PKG=%CD%
 popd
 
-echo   GpuOsPkg source: %GPUOS_PKG%
-echo   EDK2 target:     C:\uefidev\edk2\
+echo GpuOsPkg source: %GPUOS_PKG%
+echo EDK2 target: C:\uefidev\edk2\
 echo.
 
 :: ── Check admin ──────────────────────────────────────────────────────
@@ -36,7 +36,7 @@ if errorlevel 1 (
 where winget >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] winget not found.
-    echo  Install "App Installer" from the Microsoft Store, then re-run.
+    echo Install "App Installer" from the Microsoft Store, then re-run.
     pause
     exit /b 1
 )
@@ -64,15 +64,15 @@ set "PATH=%PATH%;C:\Program Files\LLVM\bin;C:\Program Files\NASM;C:\Program File
 :: ── Clone EDK2 ───────────────────────────────────────────────────────
 echo [5/6] Setting up EDK2 at C:\uefidev\edk2...
 if not exist "C:\uefidev" mkdir C:\uefidev
-cd /d C:\uefidev
+cd C:\uefidev
 
 if exist "edk2\.git" (
-    echo   EDK2 already cloned, pulling latest...
+    echo EDK2 already cloned, pulling latest...
     cd edk2
     git pull --quiet
     git submodule update --init --recursive --quiet
 ) else (
-    echo   Cloning EDK2 (this may take a few minutes)...
+    echo Cloning EDK2 (this may take a few minutes)...
     git clone https://github.com/tianocore/edk2.git
     cd edk2
     git submodule update --init --recursive
@@ -85,45 +85,45 @@ call edksetup.bat Rebuild
 
 :: ── Copy GpuOsPkg into edk2\ ─────────────────────────────────────────
 echo.
-echo   Copying GpuOsPkg into EDK2...
+echo Copying GpuOsPkg into EDK2...
 set DST=C:\uefidev\edk2\GpuOsPkg
 
 if exist "%DST%" (
-    echo   Updating existing GpuOsPkg...
+    echo Updating existing GpuOsPkg...
     xcopy /E /I /Y "%GPUOS_PKG%" "%DST%" >nul
 ) else (
     xcopy /E /I /Y "%GPUOS_PKG%" "%DST%" >nul
-    echo   Copied to %DST%
+    echo Copied to %DST%
 )
 
 :: ── Write Conf\target.txt ─────────────────────────────────────────────
 echo.
-echo   Writing EDK2 build config...
+echo Writing EDK2 build config...
 (
-    echo ACTIVE_PLATFORM       = GpuOsPkg/GpuOsPkg.dsc
-    echo TARGET                = DEBUG
-    echo TARGET_ARCH           = X64
-    echo TOOL_CHAIN_TAG        = CLANGPDB
-    echo BUILD_RULE_CONF       = Conf/build_rule.txt
+    echo ACTIVE_PLATFORM = GpuOsPkg/GpuOsPkg.dsc
+    echo TARGET          = DEBUG
+    echo TARGET_ARCH     = X64
+    echo TOOL_CHAIN_TAG  = CLANGPDB
+    echo BUILD_RULE_CONF = Conf/build_rule.txt
 ) > "C:\uefidev\edk2\Conf\target.txt"
 
 echo.
-echo  ============================================================
-echo   Setup Complete!
-echo  ============================================================
+echo ============================================================
+echo Setup Complete!
+echo ============================================================
 echo.
-echo   Everything is at: C:\uefidev\edk2\GpuOsPkg\
+echo Everything is at: C:\uefidev\edk2\GpuOsPkg\
 echo.
-echo   NEXT STEPS:
+echo NEXT STEPS:
 echo.
-echo   1. Open a NEW Command Prompt (so PATH changes take effect)
-echo   2. Run:  C:\uefidev\edk2\GpuOsPkg\Scripts\build_and_deploy.bat
+echo 1. Open a NEW Command Prompt (so PATH changes take effect)
+echo 2. Run: C:\uefidev\edk2\GpuOsPkg\Scripts\build_and_deploy.bat
 echo.
-echo   To test in QEMU before booting real hardware:
-echo     a) Download OVMF.fd from:
-echo        https://retrage.github.io/edk2-nightly/
-echo        (file named RELEASEX64_OVMF.fd — rename to OVMF.fd)
-echo     b) Place it at: C:\uefidev\edk2\GpuOsPkg\OVMF.fd
-echo     c) Run: C:\uefidev\edk2\GpuOsPkg\Scripts\run_qemu.bat
+echo To test in QEMU before booting real hardware:
+echo a) Download OVMF.fd from:
+echo    https://retrage.github.io/edk2-nightly/
+echo    (file named RELEASEX64_OVMF.fd — rename to OVMF.fd)
+echo b) Place it at: C:\uefidev\edk2\GpuOsPkg\OVMF.fd
+echo c) Run: C:\uefidev\edk2\GpuOsPkg\Scripts\run_qemu.bat
 echo.
 pause
