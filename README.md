@@ -12,4 +12,4 @@ Expand-Archive -Path "C:\uefidev\BaseTools-win32.zip" -DestinationPath "C:\uefid
 Copy-Item "C:\uefidev\BaseTools-win32\edk2-BaseTools-win32-master\*" "C:\uefidev\edk2\BaseTools\Bin\Win32\" -Recurse -Force
 
 
-TODO: fix window/text boundaries
+TODO: fix add editor and virtual filesystem
