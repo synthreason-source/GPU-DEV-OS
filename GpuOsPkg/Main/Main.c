@@ -1,12 +1,12 @@
 /**
- * Main.c — GpuOS bare-metal UEFI entry point
+ * Main.c ? GpuOS bare-metal UEFI entry point
  *
  * Boot sequence:
  *   1. Grab GOP framebuffer base (GPU VRAM scanout address)
  *   2. Detect and map AMD GPU BAR0 (MMIO compute registers)
- *   3. ExitBootServices() — OS never loads
- *   4. Direct framebuffer writes → GPU display pipeline → HDMI/DP output
- *   5. (Optional) PM4 dispatch → GPU shader cores
+ *   3. ExitBootServices() ? OS never loads
+ *   4. Direct framebuffer writes ? GPU display pipeline ? HDMI/DP output
+ *   5. (Optional) PM4 dispatch ? GPU shader cores
  *   6. Halt loop
  *
  * Build: EDK2 + CLANGPDB on Windows, outputs GpuOs.efi
@@ -25,8 +25,8 @@
 /* Forward declarations                                                */
 /* ------------------------------------------------------------------ */
 STATIC VOID DrawGpuOsScreen(GPU_FB *Fb, GPU_INFO *GpuInfo);
-STATIC VOID DrawProgressBar(GPU_FB *Fb, UINT32 X, UINT32 Y, UINT32 W, UINT32 H,
-                             UINT32 Percent, UINT32 FgColor, UINT32 BgColor);
+//STATIC VOID DrawProgressBar(GPU_FB *Fb, UINT32 X, UINT32 Y, UINT32 W, UINT32 H,
+                             //UINT32 Percent, UINT32 FgColor, UINT32 BgColor);
 STATIC VOID DrawHexU32(GPU_FB *Fb, UINT32 X, UINT32 Y, UINT32 Value,
                         UINT32 FgColor, UINT32 BgColor);
 
@@ -63,8 +63,9 @@ STATIC VOID U16ToDecStr(UINT16 Value, CHAR8 *Buf) {
 }
 
 /* ------------------------------------------------------------------ */
-/* GPU OS Shell — renders entirely via direct framebuffer writes       */
+/* GPU OS Shell ? renders entirely via direct framebuffer writes       */
 /* ------------------------------------------------------------------ */
+/*
 STATIC VOID DrawProgressBar(GPU_FB *Fb, UINT32 X, UINT32 Y, UINT32 W, UINT32 H,
                               UINT32 Percent, UINT32 FgColor, UINT32 BgColor) {
     GfxFillRect(Fb, X, Y, W, H, BgColor);
@@ -72,7 +73,7 @@ STATIC VOID DrawProgressBar(GPU_FB *Fb, UINT32 X, UINT32 Y, UINT32 W, UINT32 H,
     UINT32 Fill = (W * Percent) / 100;
     if (Fill > 2) GfxFillRect(Fb, X+1, Y+1, Fill-2, H-2, FgColor);
 }
-
+*/
 STATIC VOID DrawHexU32(GPU_FB *Fb, UINT32 X, UINT32 Y, UINT32 Value,
                          UINT32 FgColor, UINT32 BgColor) {
     CHAR8 Buf[12];
@@ -81,24 +82,26 @@ STATIC VOID DrawHexU32(GPU_FB *Fb, UINT32 X, UINT32 Y, UINT32 Value,
 }
 
 STATIC VOID DrawGpuOsScreen(GPU_FB *Fb, GPU_INFO *GpuInfo) {
-    /* ── Background: deep navy gradient ─────────────────────────── */
+    /* ?? Background: deep navy gradient ??????????????????????????? */
     GfxGradientBackground(Fb, 0xFF0A0A12, 0xFF0D1B2A);
 
     UINT32 CX = Fb->Width / 2;
 
-    /* ── Title bar ──────────────────────────────────────────────── */
+    (VOID)CX;
+
+    /* ?? Title bar ???????????????????????????????????????????????? */
     GfxFillRect(Fb, 0, 0, Fb->Width, 36, 0xFF0A0E1A);
     GfxFillRect(Fb, 0, 36, Fb->Width, 1, 0xFF00FF88);  /* accent line */
     FontDrawStringScaled(Fb, 16, 8, "GpuOS", 0xFF00FF88, 0xFF0A0E1A, 2);
     FontDrawString(Fb, 16+5*2*8+8, 16, "bare-metal UEFI GPU pipeline", 0xFF4488AA, 0xFF0A0E1A);
     FontDrawString(Fb, Fb->Width - 9*8, 14, "v0.1.0", 0xFF335566, 0xFF0A0E1A);
 
-    /* ── Main panel ─────────────────────────────────────────────── */
+    /* ?? Main panel ??????????????????????????????????????????????? */
     UINT32 PX = 60, PY = 56, PW = Fb->Width - 120, PH = Fb->Height - 120;
     GfxFillRect(Fb, PX, PY, PW, PH, 0xE0080C18);
     GfxDrawRect (Fb, PX, PY, PW, PH, 0xFF1A3050);
 
-    /* ── Status header ──────────────────────────────────────────── */
+    /* ?? Status header ???????????????????????????????????????????? */
     GfxFillRect(Fb, PX, PY, PW, 26, 0xFF0E1828);
     FontDrawString(Fb, PX+12, PY+6, "SYSTEM STATUS", 0xFF00CCFF, 0xFF0E1828);
     FontDrawString(Fb, PX+PW-11*8, PY+6, "NO OS LOADED", 0xFF00FF88, 0xFF0E1828);
@@ -107,7 +110,7 @@ STATIC VOID DrawGpuOsScreen(GPU_FB *Fb, GPU_INFO *GpuInfo) {
     UINT32 TX = PX + 20;
     UINT32 COL2 = TX + 28*8;
 
-    /* ── Boot info ──────────────────────────────────────────────── */
+    /* ?? Boot info ???????????????????????????????????????????????? */
     FontDrawString(Fb, TX, TY, "Boot mode:", 0xFF6688AA, 0x00000000);
     FontDrawString(Fb, COL2, TY, "UEFI bare-metal (ExitBootServices)", 0xFF00FF88, 0x00000000);
     TY += 20;
@@ -120,7 +123,7 @@ STATIC VOID DrawGpuOsScreen(GPU_FB *Fb, GPU_INFO *GpuInfo) {
     FontDrawString(Fb, COL2, TY, "Direct VRAM framebuffer write (GOP)", 0xFF00FF88, 0x00000000);
     TY += 20;
 
-    /* ── Resolution ─────────────────────────────────────────────── */
+    /* ?? Resolution ??????????????????????????????????????????????? */
     CHAR8 Res[24] = "                       ";
     CHAR8 NumBuf[8];
     U16ToDecStr(Fb->Width,  NumBuf); 
@@ -136,16 +139,16 @@ STATIC VOID DrawGpuOsScreen(GPU_FB *Fb, GPU_INFO *GpuInfo) {
     FontDrawString(Fb, COL2, TY, Res, 0xFFDDEEFF, 0x00000000);
     TY += 20;
 
-    /* ── Framebuffer address ─────────────────────────────────────── */
+    /* ?? Framebuffer address ??????????????????????????????????????? */
     FontDrawString(Fb, TX, TY, "FB base address:", 0xFF6688AA, 0x00000000);
     DrawHexU32(Fb, COL2, TY, (UINT32)(UINTN)Fb->FrameBuffer, 0xFFFFCC00, 0x00000000);
     TY += 30;
 
-    /* ── Divider ────────────────────────────────────────────────── */
+    /* ?? Divider ?????????????????????????????????????????????????? */
     GfxFillRect(Fb, TX, TY, PW-40, 1, 0xFF1A3050);
     TY += 12;
 
-    /* ── GPU Info section ─────────────────────────────────────────── */
+    /* ?? GPU Info section ??????????????????????????????????????????? */
     FontDrawString(Fb, TX, TY, "GPU HARDWARE", 0xFF00CCFF, 0x00000000);
     TY += 20;
 
@@ -181,18 +184,18 @@ STATIC VOID DrawGpuOsScreen(GPU_FB *Fb, GPU_INFO *GpuInfo) {
     }
     TY += 10;
 
-    /* ── Divider ────────────────────────────────────────────────── */
+    /* ?? Divider ?????????????????????????????????????????????????? */
     GfxFillRect(Fb, TX, TY, PW-40, 1, 0xFF1A3050);
     TY += 12;
 
-    /* ── Kernel log simulation ───────────────────────────────────── */
+    /* ?? Kernel log simulation ????????????????????????????????????? */
     FontDrawString(Fb, TX, TY, "KERNEL LOG", 0xFF00CCFF, 0x00000000);
     TY += 20;
 
     struct { const CHAR8 *Prefix; const CHAR8 *Msg; UINT32 PfxColor; } Log[] = {
         { "[  OK  ] ", "UEFI GOP protocol acquired",             0xFF00FF88 },
         { "[  OK  ] ", "Framebuffer mapped, resolution detected", 0xFF00FF88 },
-        { "[  OK  ] ", "ExitBootServices() — host OS terminated", 0xFF00FF88 },
+        { "[  OK  ] ", "ExitBootServices() ? host OS terminated", 0xFF00FF88 },
         { "[  OK  ] ", "PCI bus scanned for AMD GPU",            0xFF00FF88 },
         { "[  OK  ] ", "GPU BAR0 MMIO mapped",                   0xFF00FF88 },
         { "[ INFO ] ", "PM4 command ring: awaiting dispatch",    0xFF88AAFF },
@@ -205,7 +208,7 @@ STATIC VOID DrawGpuOsScreen(GPU_FB *Fb, GPU_INFO *GpuInfo) {
         TY += 18;
     }
 
-    /* ── Bottom footer bar ──────────────────────────────────────── */
+    /* ?? Bottom footer bar ???????????????????????????????????????? */
     UINT32 FY = Fb->Height - 28;
     GfxFillRect(Fb, 0, FY, Fb->Width, 28, 0xFF060912);
     GfxFillRect(Fb, 0, FY, Fb->Width, 1,  0xFF1A3050);
@@ -229,7 +232,7 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle,
     SetMem(&Fb,      sizeof(Fb),      0);
     SetMem(&GpuInfo, sizeof(GpuInfo), 0);
 
-    /* ── A: Initialize framebuffer (must be before ExitBootServices) */
+    /* ?? A: Initialize framebuffer (must be before ExitBootServices) */
     EFI_STATUS Status = GfxInit(gBS, &Fb);
     if (EFI_ERROR(Status)) {
         SystemTable->ConOut->OutputString(
@@ -238,12 +241,12 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle,
         return Status;
     }
 
-    /* ── B: Detect and map AMD GPU BAR0 for compute dispatch ──────── */
+    /* ?? B: Detect and map AMD GPU BAR0 for compute dispatch ???????? */
     Status = FindAndMapGpu(gBS, &GpuInfo);
     if (!EFI_ERROR(Status))
         GpuFound = TRUE;
 
-    /* ── C: Get memory map key (required for ExitBootServices) ─────── */
+    /* ?? C: Get memory map key (required for ExitBootServices) ??????? */
     UINTN MapSize = 0, MapKey = 0, DescSize = 0;
     UINT32 DescVer = 0;
     EFI_MEMORY_DESCRIPTOR *MemMap = NULL;
@@ -253,25 +256,25 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle,
     gBS->AllocatePool(EfiLoaderData, MapSize, (VOID**)&MemMap);
     gBS->GetMemoryMap(&MapSize, MemMap, &MapKey, &DescSize, &DescVer);
 
-    /* ── D: EXIT BOOT SERVICES — point of no return ─────────────── */
+    /* ?? D: EXIT BOOT SERVICES ? point of no return ??????????????? */
     /*       Windows / any OS is now permanently blocked from loading */
     Status = gBS->ExitBootServices(ImageHandle, MapKey);
     if (EFI_ERROR(Status)) {
-        /* MapKey went stale — retry (UEFI spec mandates this path) */
+        /* MapKey went stale ? retry (UEFI spec mandates this path) */
         gBS->GetMemoryMap(&MapSize, MemMap, &MapKey, &DescSize, &DescVer);
         gBS->ExitBootServices(ImageHandle, MapKey);
     }
 
-    /* ══════════════════════════════════════════════════════════════ */
+    /* ?????????????????????????????????????????????????????????????? */
     /* FROM THIS POINT: NO OS. NO UEFI. NO DRIVERS.                 */
     /* Fb.FrameBuffer is a live pointer to GPU VRAM scanout region.  */
     /* Writing pixels here produces direct HDMI/DP output.           */
     /* GGpuMmio points to AMD GPU MMIO register space.               */
-    /* ══════════════════════════════════════════════════════════════ */
+    /* ?????????????????????????????????????????????????????????????? */
 
     DrawGpuOsScreen(&Fb, GpuFound ? &GpuInfo : NULL);
 
-    /* ── E: Halt forever (your OS / event loop goes here) ────────── */
+    /* ?? E: Halt forever (your OS / event loop goes here) ?????????? */
     while (1) {
         __asm__ volatile ("hlt");
     }

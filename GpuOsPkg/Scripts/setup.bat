@@ -67,6 +67,12 @@ if not exist "C:\uefidev" mkdir C:\uefidev
 cd C:\uefidev
 
 
+echo Cloning EDK2 (this may take a few minutes)...
+git clone https://github.com/tianocore/edk2.git
+cd edk2
+git submodule update --init --recursive
+
+
 :: ── Bootstrap EDK2 build tools ───────────────────────────────────────
 echo.
 echo [6/6] Bootstrapping EDK2 build system...

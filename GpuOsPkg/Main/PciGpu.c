@@ -1,5 +1,5 @@
 /**
- * PciGpu.c — AMD GPU detection and BAR0 MMIO mapping for bare-metal compute
+ * PciGpu.c ? AMD GPU detection and BAR0 MMIO mapping for bare-metal compute
  * Maps GPU MMIO register space before ExitBootServices.
  * After ExitBootServices, writes PM4 command packets directly to shader dispatch.
  */
@@ -8,7 +8,7 @@
 #include <Library/BaseMemoryLib.h>
 #include <IndustryStandard/Pci.h>
 
-/* Global GPU MMIO base — valid after FindAndMapGpu(), used post-ExitBootServices */
+/* Global GPU MMIO base ? valid after FindAndMapGpu(), used post-ExitBootServices */
 volatile UINT32 *GGpuMmio     = NULL;
 UINT64           GGpuBar0Base  = 0;
 UINT64           GGpuBar0Size  = 0;
@@ -68,7 +68,7 @@ EFI_STATUS FindAndMapGpu(EFI_BOOT_SERVICES *BS, GPU_INFO *Info) {
         PciIo->Pci.Read(PciIo, EfiPciIoWidthUint16,
                         PCI_DEVICE_ID_OFFSET,  1, &DeviceId);
 
-        /* Found AMD GPU — any AMD VEN ID qualifies; known IDs are preferred */
+        /* Found AMD GPU ? any AMD VEN ID qualifies; known IDs are preferred */
         if (VendorId == AMD_VENDOR_ID) {
             /* Read class code to confirm display controller */
             UINT8 ClassCode[3];
@@ -77,9 +77,9 @@ EFI_STATUS FindAndMapGpu(EFI_BOOT_SERVICES *BS, GPU_INFO *Info) {
             /* Class 0x03 = Display controller */
             if (ClassCode[2] != 0x03) continue;
 
-            /* Get BAR0 — GPU MMIO register space */
+            /* Get BAR0 ? GPU MMIO register space */
             UINT64 Bar0Base = 0, Bar0Len = 0;
-            UINT8  Bar0Width = 0;
+            //UINT8  Bar0Width = 0;
             EFI_ACPI_ADDRESS_SPACE_DESCRIPTOR *Desc = NULL;
 
             Status = PciIo->GetBarAttributes(PciIo, 0, NULL, (VOID**)&Desc);
@@ -132,13 +132,13 @@ VOID GpuMmioWrite32(UINT32 RegOffset, UINT32 Value) {
 }
 
 /**
- * GpuWaitIdle — Poll GPU status register until idle.
+ * GpuWaitIdle ? Poll GPU status register until idle.
  * AMD CP_STAT register: bit 31 = busy when set.
  * Timeout prevents infinite hang on unresponsive hardware.
  */
 BOOLEAN GpuWaitIdle(UINT32 TimeoutMs) {
     if (!GGpuMmio) return FALSE;
-    /* AMD CP_STAT MMIO offset — varies by ASIC; RDNA3 default: */
+    /* AMD CP_STAT MMIO offset ? varies by ASIC; RDNA3 default: */
     #define AMD_CP_STAT_OFFSET  0x8210
     #define AMD_CP_STAT_BUSY    (1U << 31)
 

@@ -1,9 +1,8 @@
 /**
- * Font.h — 8x16 bitmap font renderer for bare-metal framebuffer
+ * Font.h ? 8x16 bitmap font renderer for bare-metal framebuffer
  * No OS, no FreeType, no TTF. Pure bitmapped ASCII glyph blitting.
  */
 #ifndef FONT_H
-#define FONT_H
 #include "Graphics.h"
 
 #define FONT_W  8   /* glyph width  in pixels */
@@ -15,7 +14,7 @@
  * @param X,Y      Top-left pixel of glyph
  * @param Ch       ASCII character (0-127)
  * @param FgColor  Foreground BGRA
- * @param BgColor  Background BGRA (set to 0 for transparent — skips bg pixels)
+ * @param BgColor  Background BGRA (set to 0 for transparent ? skips bg pixels)
  * @param Transparent  If TRUE, skip background pixels (overlay mode)
  */
 VOID FontDrawChar(GPU_FB *Fb, UINT32 X, UINT32 Y,
