@@ -1,54 +1,35 @@
-## GpuOsPkg.dsc — EDK2 Package Descriptor for GpuOS
-## v2: VFS + Editor added
+## GpuOsPkg.dsc — Package descriptor for bare-metal GPU OS
+## Bare-metal UEFI → GPU framebuffer → direct display pipeline
 
 [Defines]
   PLATFORM_NAME           = GpuOsPkg
-  PLATFORM_GUID           = 7a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d
-  PLATFORM_VERSION        = 2.0
+  PLATFORM_GUID           = 11111111-2222-3333-4444-555555555555
+  PLATFORM_VERSION        = 0.1
   DSC_SPECIFICATION       = 0x00010005
   OUTPUT_DIRECTORY        = Build/GpuOsPkg
   SUPPORTED_ARCHITECTURES = X64
   BUILD_TARGETS           = DEBUG|RELEASE
-
+  
+[BuildOptions]
+  MSFT:*_*_*_CC_FLAGS = /GS-
+  
 [LibraryClasses]
-  ## Entry point
-  UefiApplicationEntryPoint|MdePkg/Library/UefiApplicationEntryPoint/UefiApplicationEntryPoint.inf
-
-  ## Core UEFI
-  UefiLib|MdePkg/Library/UefiLib/UefiLib.inf
+  StackCheckLib|GpuOsPkg/Library/StackCheckLibNull/StackCheckLibNull.inf
   UefiBootServicesTableLib|MdePkg/Library/UefiBootServicesTableLib/UefiBootServicesTableLib.inf
+  UefiApplicationEntryPoint|MdePkg/Library/UefiApplicationEntryPoint/UefiApplicationEntryPoint.inf
+  StackCheckLib|GpuOsPkg/Library/StackCheckLibNull/StackCheckLibNull.inf
   UefiRuntimeServicesTableLib|MdePkg/Library/UefiRuntimeServicesTableLib/UefiRuntimeServicesTableLib.inf
-
-  ## Base
+  UefiLib|MdePkg/Library/UefiLib/UefiLib.inf
   BaseLib|MdePkg/Library/BaseLib/BaseLib.inf
   BaseMemoryLib|MdePkg/Library/BaseMemoryLib/BaseMemoryLib.inf
-  MemoryAllocationLib|MdePkg/Library/UefiMemoryAllocationLib/UefiMemoryAllocationLib.inf
-
-  ## Print / debug (needed by UefiLib)
-  PrintLib|MdePkg/Library/BasePrintLib/BasePrintLib.inf
   DebugLib|MdePkg/Library/BaseDebugLibNull/BaseDebugLibNull.inf
-  DebugPrintErrorLevelLib|MdePkg/Library/BaseDebugPrintErrorLevelLib/BaseDebugPrintErrorLevelLib.inf
-
-  ## Device path (needed by UefiLib)
-  DevicePathLib|MdePkg/Library/UefiDevicePathLib/UefiDevicePathLib.inf
-
-  ## Register filter (needed by BaseLib on some EDK2 versions)
-  RegisterFilterLib|MdePkg/Library/RegisterFilterLibNull/RegisterFilterLibNull.inf
-
-  ## PcdLib — consumed transitively by BaseLib and many other MdePkg libs
+  PrintLib|MdePkg/Library/BasePrintLib/BasePrintLib.inf
   PcdLib|MdePkg/Library/BasePcdLibNull/BasePcdLibNull.inf
-
-  ## SafeIntLib — consumed transitively by BaseLib on recent EDK2
-  SafeIntLib|MdePkg/Library/BaseSafeIntLib/BaseSafeIntLib.inf
-
-  ## StackCheckLib — consumed by UefiApplicationEntryPoint; our null stub
-  ## satisfies the class without pulling in MSVC runtime stack cookie support
-  StackCheckLib|GpuOsPkg/Lib/StackCheckLibNull/StackCheckLibNull.inf
+  MemoryAllocationLib|MdePkg/Library/UefiMemoryAllocationLib/UefiMemoryAllocationLib.inf
+  DevicePathLib|MdePkg/Library/UefiDevicePathLib/UefiDevicePathLib.inf
+  RegisterFilterLib|MdePkg/Library/RegisterFilterLibNull/RegisterFilterLibNull.inf
+[Packages]
+  MdePkg/MdePkg.dec
 
 [Components]
   GpuOsPkg/Main/Main.inf
-
-[BuildOptions]
-  *_CLANGPDB_X64_CC_FLAGS  = -fno-stack-protector -Wno-unused-function
-  *_GCC5_X64_CC_FLAGS      = -fno-stack-protector
-  *_VS2019_X64_CC_FLAGS    = /GS-

@@ -1,48 +1,24 @@
-##
-## Main.inf — EDK2 module descriptor for GpuOS
-## v2: adds VFS.c, Editor.c
-##
-
 [Defines]
   INF_VERSION    = 0x00010005
   BASE_NAME      = GpuOs
-  FILE_GUID      = 4e3f2b1a-8c7d-4f6e-b5a9-1d2e3c4f5e6a
+  FILE_GUID      = AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE
   MODULE_TYPE    = UEFI_APPLICATION
-  VERSION_STRING = 2.0
+  VERSION_STRING = 0.1
   ENTRY_POINT    = UefiMain
 
 [Sources]
   Main.c
   Graphics.c
-  Graphics.h
   Font.c
-  Font.h
   PciGpu.c
-  PciGpu.h
-  VFS.c
-  VFS.h
-  Editor.c
-  Editor.h
 
 [Packages]
   MdePkg/MdePkg.dec
-  MdeModulePkg/MdeModulePkg.dec
 
 [LibraryClasses]
-  UefiApplicationEntryPoint
-  UefiLib
-  UefiBootServicesTableLib
-  BaseMemoryLib
   BaseLib
+  UefiApplicationEntryPoint
+  UefiBootServicesTableLib
+  UefiLib
+  BaseMemoryLib
   MemoryAllocationLib
-
-[Protocols]
-  gEfiGraphicsOutputProtocolGuid
-  gEfiPciIoProtocolGuid
-  gEfiSimpleTextInProtocolGuid
-
-[BuildOptions]
-  ## Disable stack cookie — we supply our own null stub (StackCheckLibNull)
-  MSFT:*_*_X64_CC_FLAGS  = /GS-
-  GCC:*_*_X64_CC_FLAGS   = -fno-stack-protector
-  CLANG:*_*_X64_CC_FLAGS = -fno-stack-protector
