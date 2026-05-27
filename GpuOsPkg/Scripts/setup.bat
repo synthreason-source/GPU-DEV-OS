@@ -66,17 +66,12 @@ echo [5/6] Setting up EDK2 at C:\uefidev\edk2...
 if not exist "C:\uefidev" mkdir C:\uefidev
 cd C:\uefidev
 
-if exist "edk2\.git" (
-    echo EDK2 already cloned, pulling latest...
-    cd edk2
-    git pull --quiet
-    git submodule update --init --recursive --quiet
-) else (
-    echo Cloning EDK2 (this may take a few minutes)...
-    git clone https://github.com/tianocore/edk2.git
-    cd edk2
-    git submodule update --init --recursive
-)
+
+echo Cloning EDK2 (this may take a few minutes)...
+git clone https://github.com/tianocore/edk2.git
+cd edk2
+git submodule update --init --recursive
+
 
 :: ── Bootstrap EDK2 build tools ───────────────────────────────────────
 echo.
