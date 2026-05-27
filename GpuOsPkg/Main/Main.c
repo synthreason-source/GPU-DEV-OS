@@ -1,283 +1,186 @@
-/**
- * Main.c ? GpuOS bare-metal UEFI entry point
- *
- * Boot sequence:
- *   1. Grab GOP framebuffer base (GPU VRAM scanout address)
- *   2. Detect and map AMD GPU BAR0 (MMIO compute registers)
- *   3. ExitBootServices() ? OS never loads
- *   4. Direct framebuffer writes ? GPU display pipeline ? HDMI/DP output
- *   5. (Optional) PM4 dispatch ? GPU shader cores
- *   6. Halt loop
- *
- * Build: EDK2 + CLANGPDB on Windows, outputs GpuOs.efi
- * Deploy: Copy to USB:/EFI/BOOT/BOOTX64.EFI and boot from USB
- */
-
 #include <Uefi.h>
+#include <Protocol/SimplePointer.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/BaseMemoryLib.h>
-#include <Library/MemoryAllocationLib.h>
+#include <Library/PrintLib.h>
 #include "Graphics.h"
 #include "Font.h"
-#include "PciGpu.h"
 
-/* ------------------------------------------------------------------ */
-/* Forward declarations                                                */
-/* ------------------------------------------------------------------ */
-STATIC VOID DrawGpuOsScreen(GPU_FB *Fb, GPU_INFO *GpuInfo);
-//STATIC VOID DrawProgressBar(GPU_FB *Fb, UINT32 X, UINT32 Y, UINT32 W, UINT32 H,
-                             //UINT32 Percent, UINT32 FgColor, UINT32 BgColor);
-STATIC VOID DrawHexU32(GPU_FB *Fb, UINT32 X, UINT32 Y, UINT32 Value,
-                        UINT32 FgColor, UINT32 BgColor);
+#define MAX_WINDOWS 8
+#define TITLE_H 22
+#define TASKBAR_H 32
 
-/* ------------------------------------------------------------------ */
-/* Hex formatting (no libc, no snprintf)                               */
-/* ------------------------------------------------------------------ */
-STATIC VOID U32ToHexStr(UINT32 Value, CHAR8 *Buf) {
-    /* Buf must be at least 11 bytes: "0x" + 8 hex digits + NUL */
-    const CHAR8 HexChars[] = "0123456789ABCDEF";
-    Buf[0] = '0'; Buf[1] = 'x';
-    for (INT32 i = 7; i >= 0; i--) {
-        Buf[2 + (7 - i)] = HexChars[(Value >> (i * 4)) & 0xF];
-    }
-    Buf[10] = '\0';
+typedef struct {
+  BOOLEAN Active;
+  BOOLEAN Focused;
+  UINT32 X,Y,W,H;
+  CHAR8 Title[32];
+  CHAR8 Buffer[1024];
+  UINTN BufferLen;
+} TERMINAL_WINDOW;
+
+STATIC TERMINAL_WINDOW gWindows[MAX_WINDOWS];
+STATIC UINTN gWindowCount = 0;
+STATIC INT32 gMouseX = 100;
+STATIC INT32 gMouseY = 100;
+STATIC EFI_SIMPLE_POINTER_PROTOCOL *gMouse = NULL;
+STATIC EFI_SIMPLE_TEXT_INPUT_PROTOCOL *gKeyboard = NULL;
+
+STATIC VOID AppendText(TERMINAL_WINDOW *Win, CONST CHAR8 *Txt) {
+  while (*Txt && Win->BufferLen < sizeof(Win->Buffer)-1) {
+    Win->Buffer[Win->BufferLen++] = *Txt++;
+  }
+  Win->Buffer[Win->BufferLen] = 0;
 }
 
-STATIC VOID U16ToDecStr(UINT16 Value, CHAR8 *Buf) {
-    /* Buf must be at least 6 bytes */
-    UINT16 V = Value;
-    Buf[0] = '0' + (V / 10000) % 10;
-    Buf[1] = '0' + (V /  1000) % 10;
-    Buf[2] = '0' + (V /   100) % 10;
-    Buf[3] = '0' + (V /    10) % 10;
-    Buf[4] = '0' + (V        ) % 10;
-    Buf[5] = '\0';
-    /* Trim leading zeros */
-    CHAR8 *p = Buf;
-    while (*p == '0' && *(p+1)) p++;
-    if (p != Buf) {
-        CHAR8 *d = Buf;
-        while (*p) *d++ = *p++;
-        *d = '\0';
-    }
+STATIC VOID RunCommand(TERMINAL_WINDOW *Win, CHAR8 Cmd) {
+  if (Cmd == 't') AppendText(Win, "\nCurrent time command invoked");
+  else if (Cmd == 'v') AppendText(Win, "\nGpuOS version 0.2 desktop preview");
+  else if (Cmd == 'e') AppendText(Win, "\nText editor opened (placeholder)");
+  else if (Cmd == 'h') AppendText(Win, "\nCommands: t=time v=version e=editor h=help");
 }
 
-/* ------------------------------------------------------------------ */
-/* GPU OS Shell ? renders entirely via direct framebuffer writes       */
-/* ------------------------------------------------------------------ */
-/*
-STATIC VOID DrawProgressBar(GPU_FB *Fb, UINT32 X, UINT32 Y, UINT32 W, UINT32 H,
-                              UINT32 Percent, UINT32 FgColor, UINT32 BgColor) {
-    GfxFillRect(Fb, X, Y, W, H, BgColor);
-    GfxDrawRect(Fb, X, Y, W, H, FgColor);
-    UINT32 Fill = (W * Percent) / 100;
-    if (Fill > 2) GfxFillRect(Fb, X+1, Y+1, Fill-2, H-2, FgColor);
-}
-*/
-STATIC VOID DrawHexU32(GPU_FB *Fb, UINT32 X, UINT32 Y, UINT32 Value,
-                         UINT32 FgColor, UINT32 BgColor) {
-    CHAR8 Buf[12];
-    U32ToHexStr(Value, Buf);
-    FontDrawString(Fb, X, Y, Buf, FgColor, BgColor);
+STATIC VOID SpawnTerminal(VOID) {
+  if (gWindowCount >= MAX_WINDOWS) return;
+  TERMINAL_WINDOW *W = &gWindows[gWindowCount];
+  SetMem(W, sizeof(*W), 0);
+  W->Active = TRUE;
+  W->Focused = TRUE;
+  W->X = 120 + (gWindowCount * 24);
+  W->Y = 80 + (gWindowCount * 24);
+  W->W = 520;
+  W->H = 280;
+  AsciiSPrint(W->Title, sizeof(W->Title), "Terminal %d", (int)(gWindowCount + 1));
+  AppendText(W, "GpuOS shell ready\nType: h(help) t(time) v(version) e(editor)");
+
+  for (UINTN i=0;i<gWindowCount;i++) gWindows[i].Focused = FALSE;
+  gWindowCount++;
 }
 
-STATIC VOID DrawGpuOsScreen(GPU_FB *Fb, GPU_INFO *GpuInfo) {
-    /* ?? Background: deep navy gradient ??????????????????????????? */
-    GfxGradientBackground(Fb, 0xFF0A0A12, 0xFF0D1B2A);
+STATIC VOID DrawWindow(GPU_FB *Fb, TERMINAL_WINDOW *W) {
+  if (!W->Active) return;
 
-    UINT32 CX = Fb->Width / 2;
+  UINT32 Border = W->Focused ? 0xFF00FF88 : 0xFF506070;
+  GfxFillRect(Fb, W->X, W->Y, W->W, W->H, 0xFF111111);
+  GfxDrawRect(Fb, W->X, W->Y, W->W, W->H, Border);
+  GfxFillRect(Fb, W->X, W->Y, W->W, TITLE_H, 0xFF1A1A1A);
+  FontDrawString(Fb, W->X + 8, W->Y + 6, W->Title, 0xFFFFFFFF, 0xFF1A1A1A);
 
-    (VOID)CX;
+  GfxFillRect(Fb, W->X + W->W - 22, W->Y + 3, 18, 16, 0xFFAA2222);
+  FontDrawString(Fb, W->X + W->W - 17, W->Y + 6, "X", 0xFFFFFFFF, 0xFFAA2222);
 
-    /* ?? Title bar ???????????????????????????????????????????????? */
-    GfxFillRect(Fb, 0, 0, Fb->Width, 36, 0xFF0A0E1A);
-    GfxFillRect(Fb, 0, 36, Fb->Width, 1, 0xFF00FF88);  /* accent line */
-    FontDrawStringScaled(Fb, 16, 8, "GpuOS", 0xFF00FF88, 0xFF0A0E1A, 2);
-    FontDrawString(Fb, 16+5*2*8+8, 16, "bare-metal UEFI GPU pipeline", 0xFF4488AA, 0xFF0A0E1A);
-    FontDrawString(Fb, Fb->Width - 9*8, 14, "v0.1.0", 0xFF335566, 0xFF0A0E1A);
-
-    /* ?? Main panel ??????????????????????????????????????????????? */
-    UINT32 PX = 60, PY = 56, PW = Fb->Width - 120, PH = Fb->Height - 120;
-    GfxFillRect(Fb, PX, PY, PW, PH, 0xE0080C18);
-    GfxDrawRect (Fb, PX, PY, PW, PH, 0xFF1A3050);
-
-    /* ?? Status header ???????????????????????????????????????????? */
-    GfxFillRect(Fb, PX, PY, PW, 26, 0xFF0E1828);
-    FontDrawString(Fb, PX+12, PY+6, "SYSTEM STATUS", 0xFF00CCFF, 0xFF0E1828);
-    FontDrawString(Fb, PX+PW-11*8, PY+6, "NO OS LOADED", 0xFF00FF88, 0xFF0E1828);
-
-    UINT32 TY = PY + 40;
-    UINT32 TX = PX + 20;
-    UINT32 COL2 = TX + 28*8;
-
-    /* ?? Boot info ???????????????????????????????????????????????? */
-    FontDrawString(Fb, TX, TY, "Boot mode:", 0xFF6688AA, 0x00000000);
-    FontDrawString(Fb, COL2, TY, "UEFI bare-metal (ExitBootServices)", 0xFF00FF88, 0x00000000);
-    TY += 20;
-
-    FontDrawString(Fb, TX, TY, "Windows status:", 0xFF6688AA, 0x00000000);
-    FontDrawString(Fb, COL2, TY, "NEVER LOADED", 0xFFFF4444, 0x00000000);
-    TY += 20;
-
-    FontDrawString(Fb, TX, TY, "Display source:", 0xFF6688AA, 0x00000000);
-    FontDrawString(Fb, COL2, TY, "Direct VRAM framebuffer write (GOP)", 0xFF00FF88, 0x00000000);
-    TY += 20;
-
-    /* ?? Resolution ??????????????????????????????????????????????? */
-    CHAR8 Res[24] = "                       ";
-    CHAR8 NumBuf[8];
-    U16ToDecStr(Fb->Width,  NumBuf); 
-    /* manual string build: WxH */
-    UINT32 ri = 0;
-    for (CHAR8 *p = NumBuf; *p; p++) Res[ri++] = *p;
-    Res[ri++] = 'x';
-    U16ToDecStr(Fb->Height, NumBuf);
-    for (CHAR8 *p = NumBuf; *p; p++) Res[ri++] = *p;
-    Res[ri] = '\0';
-
-    FontDrawString(Fb, TX, TY, "Resolution:", 0xFF6688AA, 0x00000000);
-    FontDrawString(Fb, COL2, TY, Res, 0xFFDDEEFF, 0x00000000);
-    TY += 20;
-
-    /* ?? Framebuffer address ??????????????????????????????????????? */
-    FontDrawString(Fb, TX, TY, "FB base address:", 0xFF6688AA, 0x00000000);
-    DrawHexU32(Fb, COL2, TY, (UINT32)(UINTN)Fb->FrameBuffer, 0xFFFFCC00, 0x00000000);
-    TY += 30;
-
-    /* ?? Divider ?????????????????????????????????????????????????? */
-    GfxFillRect(Fb, TX, TY, PW-40, 1, 0xFF1A3050);
-    TY += 12;
-
-    /* ?? GPU Info section ??????????????????????????????????????????? */
-    FontDrawString(Fb, TX, TY, "GPU HARDWARE", 0xFF00CCFF, 0x00000000);
-    TY += 20;
-
-    if (GpuInfo && GpuInfo->VendorId == 0x1002) {
-        FontDrawString(Fb, TX, TY, "Vendor:", 0xFF6688AA, 0x00000000);
-        FontDrawString(Fb, COL2, TY,
-            GpuInfo->IsKnownRdna ? "AMD (RDNA2/3 - Verified)" : "AMD (Unknown revision)",
-            0xFF00FF88, 0x00000000);
-        TY += 20;
-
-        FontDrawString(Fb, TX, TY, "Device ID:", 0xFF6688AA, 0x00000000);
-        DrawHexU32(Fb, COL2, TY, (UINT32)GpuInfo->DeviceId, 0xFFFFCC00, 0x00000000);
-        TY += 20;
-
-        FontDrawString(Fb, TX, TY, "BAR0 (MMIO):", 0xFF6688AA, 0x00000000);
-        DrawHexU32(Fb, COL2, TY, (UINT32)(GpuInfo->Bar0Base >> 32), 0xFFFF8844, 0x00000000);
-        FontDrawString(Fb, COL2 + 10*8, TY, ":", 0xFF6688AA, 0x00000000);
-        DrawHexU32(Fb, COL2 + 11*8, TY, (UINT32)GpuInfo->Bar0Base, 0xFFFF8844, 0x00000000);
-        TY += 20;
-
-        FontDrawString(Fb, TX, TY, "Compute dispatch:", 0xFF6688AA, 0x00000000);
-        FontDrawString(Fb, COL2, TY, "PM4 ring ready (see PciGpu.h)", 0xFF00FF88, 0x00000000);
-        TY += 20;
-    } else {
-        FontDrawString(Fb, TX, TY, "AMD GPU:", 0xFF6688AA, 0x00000000);
-        FontDrawString(Fb, COL2, TY,
-            GpuInfo ? "NOT FOUND (non-AMD or detection failed)" : "GPU scan skipped",
-            0xFFFF6644, 0x00000000);
-        TY += 20;
-        FontDrawString(Fb, TX, TY, "Tip:", 0xFF6688AA, 0x00000000);
-        FontDrawString(Fb, COL2, TY, "Display still works via GOP framebuffer", 0xFF888888, 0x00000000);
-        TY += 20;
+  UINT32 tx = W->X + 8;
+  UINT32 ty = W->Y + 30;
+  CHAR8 line[64];
+  UINTN li = 0;
+  for (UINTN i=0;i<W->BufferLen;i++) {
+    if (W->Buffer[i] == '\n' || li >= 62) {
+      line[li] = 0;
+      FontDrawString(Fb, tx, ty, line, 0xFF00FF88, 0xFF111111);
+      ty += 16;
+      li = 0;
+      if (W->Buffer[i] == '\n') continue;
     }
-    TY += 10;
-
-    /* ?? Divider ?????????????????????????????????????????????????? */
-    GfxFillRect(Fb, TX, TY, PW-40, 1, 0xFF1A3050);
-    TY += 12;
-
-    /* ?? Kernel log simulation ????????????????????????????????????? */
-    FontDrawString(Fb, TX, TY, "KERNEL LOG", 0xFF00CCFF, 0x00000000);
-    TY += 20;
-
-    struct { const CHAR8 *Prefix; const CHAR8 *Msg; UINT32 PfxColor; } Log[] = {
-        { "[  OK  ] ", "UEFI GOP protocol acquired",             0xFF00FF88 },
-        { "[  OK  ] ", "Framebuffer mapped, resolution detected", 0xFF00FF88 },
-        { "[  OK  ] ", "ExitBootServices() ? host OS terminated", 0xFF00FF88 },
-        { "[  OK  ] ", "PCI bus scanned for AMD GPU",            0xFF00FF88 },
-        { "[  OK  ] ", "GPU BAR0 MMIO mapped",                   0xFF00FF88 },
-        { "[ INFO ] ", "PM4 command ring: awaiting dispatch",    0xFF88AAFF },
-        { "[ INFO ] ", "No OS loaded. No kernel. No drivers.",   0xFF88AAFF },
-        { "[ HALT ] ", "System running bare-metal. Enjoy.",      0xFFFFCC00 },
-    };
-    for (UINT32 i = 0; i < sizeof(Log)/sizeof(Log[0]) && TY + 18 < PY+PH-20; i++) {
-        FontDrawString(Fb, TX, TY, Log[i].Prefix, Log[i].PfxColor, 0x00000000);
-        FontDrawString(Fb, TX + 10*8, TY, Log[i].Msg, 0xFF99AABB, 0x00000000);
-        TY += 18;
-    }
-
-    /* ?? Bottom footer bar ???????????????????????????????????????? */
-    UINT32 FY = Fb->Height - 28;
-    GfxFillRect(Fb, 0, FY, Fb->Width, 28, 0xFF060912);
-    GfxFillRect(Fb, 0, FY, Fb->Width, 1,  0xFF1A3050);
-    FontDrawString(Fb, 16, FY+8,
-        "GpuOS  |  Bare-metal UEFI GPU pipeline  |  github.com/tinygrad/tinygrad",
-        0xFF334455, 0xFF060912);
-    FontDrawString(Fb, Fb->Width - 22*8, FY+8,
-        "No OS. GPU owns display.",
-        0xFF00FF88, 0xFF060912);
+    line[li++] = W->Buffer[i];
+  }
+  line[li] = 0;
+  FontDrawString(Fb, tx, ty, line, 0xFF00FF88, 0xFF111111);
 }
 
-/* ------------------------------------------------------------------ */
-/* UEFI Entry Point                                                    */
-/* ------------------------------------------------------------------ */
-EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle,
-                            EFI_SYSTEM_TABLE *SystemTable) {
-    GPU_FB   Fb;
-    GPU_INFO GpuInfo;
-    BOOLEAN  GpuFound = FALSE;
+STATIC VOID DrawDesktop(GPU_FB *Fb) {
+  GfxGradientBackground(Fb, 0xFF0A0A12, 0xFF102040);
 
-    SetMem(&Fb,      sizeof(Fb),      0);
-    SetMem(&GpuInfo, sizeof(GpuInfo), 0);
+  GfxFillRect(Fb, 0, Fb->Height - TASKBAR_H, Fb->Width, TASKBAR_H, 0xFF080808);
+  GfxFillRect(Fb, 10, Fb->Height - 26, 120, 20, 0xFF202020);
+  GfxDrawRect(Fb, 10, Fb->Height - 26, 120, 20, 0xFF00FF88);
+  FontDrawString(Fb, 26, Fb->Height - 21, "Terminal", 0xFFFFFFFF, 0xFF202020);
 
-    /* ?? A: Initialize framebuffer (must be before ExitBootServices) */
-    EFI_STATUS Status = GfxInit(gBS, &Fb);
-    if (EFI_ERROR(Status)) {
-        SystemTable->ConOut->OutputString(
-            SystemTable->ConOut,
-            L"FATAL: EFI GOP not found. No GPU framebuffer available.\r\n");
-        return Status;
+  for (UINTN i=0;i<gWindowCount;i++) DrawWindow(Fb, &gWindows[i]);
+
+  GfxFillRect(Fb, gMouseX, gMouseY, 8, 14, 0xFFFFFFFF);
+}
+
+STATIC VOID HandleMouse(VOID) {
+  if (!gMouse) return;
+
+  EFI_SIMPLE_POINTER_STATE State;
+  if (EFI_ERROR(gMouse->GetState(gMouse, &State))) return;
+
+  gMouseX += State.RelativeMovementX / 8;
+  gMouseY -= State.RelativeMovementY / 8;
+
+  if (gMouseX < 0) gMouseX = 0;
+  if (gMouseY < 0) gMouseY = 0;
+
+  if (State.LeftButton) {
+    if (gMouseY > 0) {
+      if (gMouseX >= 10 && gMouseX <= 130) {
+        SpawnTerminal();
+      }
+
+      for (INTN i=(INTN)gWindowCount-1;i>=0;i--) {
+        TERMINAL_WINDOW *W = &gWindows[i];
+        if (!W->Active) continue;
+
+        if (gMouseX >= (INT32)(W->X + W->W - 22) &&
+            gMouseX <= (INT32)(W->X + W->W - 4) &&
+            gMouseY >= (INT32)(W->Y + 3) &&
+            gMouseY <= (INT32)(W->Y + 19)) {
+          W->Active = FALSE;
+        }
+
+        if (gMouseX >= (INT32)W->X && gMouseX <= (INT32)(W->X + W->W) &&
+            gMouseY >= (INT32)W->Y && gMouseY <= (INT32)(W->Y + TITLE_H)) {
+          for (UINTN k=0;k<gWindowCount;k++) gWindows[k].Focused = FALSE;
+          W->Focused = TRUE;
+          W->X = gMouseX - 40;
+          W->Y = gMouseY - 10;
+          break;
+        }
+      }
     }
+  }
+}
 
-    /* ?? B: Detect and map AMD GPU BAR0 for compute dispatch ???????? */
-    Status = FindAndMapGpu(gBS, &GpuInfo);
-    if (!EFI_ERROR(Status))
-        GpuFound = TRUE;
+STATIC VOID HandleKeyboard(VOID) {
+  EFI_INPUT_KEY Key;
+  if (!gKeyboard) return;
+  if (EFI_ERROR(gKeyboard->ReadKeyStroke(gKeyboard, &Key))) return;
 
-    /* ?? C: Get memory map key (required for ExitBootServices) ??????? */
-    UINTN MapSize = 0, MapKey = 0, DescSize = 0;
-    UINT32 DescVer = 0;
-    EFI_MEMORY_DESCRIPTOR *MemMap = NULL;
-
-    gBS->GetMemoryMap(&MapSize, MemMap, &MapKey, &DescSize, &DescVer);
-    MapSize += 2 * DescSize;
-    gBS->AllocatePool(EfiLoaderData, MapSize, (VOID**)&MemMap);
-    gBS->GetMemoryMap(&MapSize, MemMap, &MapKey, &DescSize, &DescVer);
-
-    /* ?? D: EXIT BOOT SERVICES ? point of no return ??????????????? */
-    /*       Windows / any OS is now permanently blocked from loading */
-    Status = gBS->ExitBootServices(ImageHandle, MapKey);
-    if (EFI_ERROR(Status)) {
-        /* MapKey went stale ? retry (UEFI spec mandates this path) */
-        gBS->GetMemoryMap(&MapSize, MemMap, &MapKey, &DescSize, &DescVer);
-        gBS->ExitBootServices(ImageHandle, MapKey);
+  for (UINTN i=0;i<gWindowCount;i++) {
+    TERMINAL_WINDOW *W = &gWindows[i];
+    if (W->Focused && W->Active) {
+      CHAR8 c = (CHAR8)Key.UnicodeChar;
+      if (c >= 32 && c <= 126) {
+        AppendText(W, "\n>");
+        W->Buffer[W->BufferLen++] = c;
+        W->Buffer[W->BufferLen] = 0;
+        RunCommand(W, c);
+      }
     }
+  }
+}
 
-    /* ?????????????????????????????????????????????????????????????? */
-    /* FROM THIS POINT: NO OS. NO UEFI. NO DRIVERS.                 */
-    /* Fb.FrameBuffer is a live pointer to GPU VRAM scanout region.  */
-    /* Writing pixels here produces direct HDMI/DP output.           */
-    /* GGpuMmio points to AMD GPU MMIO register space.               */
-    /* ?????????????????????????????????????????????????????????????? */
+EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+  GPU_FB Fb;
+  SetMem(&Fb, sizeof(Fb), 0);
 
-    DrawGpuOsScreen(&Fb, GpuFound ? &GpuInfo : NULL);
+  if (EFI_ERROR(GfxInit(gBS, &Fb))) return EFI_ABORTED;
 
-    /* ?? E: Halt forever (your OS / event loop goes here) ?????????? */
-    while (1) {
-        __asm__ volatile ("hlt");
-    }
+  gKeyboard = SystemTable->ConIn;
 
-    return EFI_SUCCESS; /* unreachable */
+  EFI_GUID MouseGuid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;
+  gBS->LocateProtocol(&MouseGuid, NULL, (VOID**)&gMouse);
+  if (gMouse) gMouse->Reset(gMouse, TRUE);
+
+  SpawnTerminal();
+
+  while (1) {
+    HandleMouse();
+    HandleKeyboard();
+    DrawDesktop(&Fb);
+    gBS->Stall(16000);
+  }
+
+  return EFI_SUCCESS;
 }
