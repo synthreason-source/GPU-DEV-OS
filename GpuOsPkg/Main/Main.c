@@ -755,6 +755,8 @@ STATIC VOID HandleKeyEx(VOID) {
   if (!gKeyEx) return;
 
   EFI_KEY_DATA KeyData;
+  EFI_STATUS Status = gKeyEx->ReadKeyStrokeEx(gKeyEx, &KeyData);
+  if (EFI_ERROR(Status)) return;   // nothing pending, that's fine
   while (!EFI_ERROR(gKeyEx->ReadKeyStrokeEx(gKeyEx, &KeyData))) {
     CHAR16 Uni = KeyData.Key.UnicodeChar;
     UINT16 Scan = KeyData.Key.ScanCode;
@@ -807,6 +809,8 @@ STATIC VOID HandleKeySimple(VOID) {
   if (!gKeySimple) return;
   EFI_INPUT_KEY Key;
   while (!EFI_ERROR(gKeySimple->ReadKeyStroke(gKeySimple, &Key))) {
+    if (gWindowCount == 0) return;  // ? guard at top of HandleKeyEx/HandleKeySimple
+
     TERMINAL_WINDOW* W = NULL;
     for (INTN k = (INTN)gWindowCount - 1; k >= 0; k--) {
       if (gWindows[k].Active && gWindows[k].Focused) { W = &gWindows[k]; break; }
@@ -864,6 +868,8 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     gBS->LocateProtocol(&KeyExGuid, NULL, (VOID**)&gKeyEx);
     if (gKeyEx) {
       /* Enable shift-state reporting */
+      gKeyEx->Reset(gKeyEx, FALSE);   // ? ADD THIS
+
       gKeyEx->SetState(gKeyEx, NULL);
     }
   }
@@ -904,22 +910,27 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
   SpawnTerminal();
 
   /* ?? Main loop ????????????????????????????????????????? */
+  // Add a dirty flag
+  STATIC BOOLEAN gDirty = TRUE;
+
+  // In your main loop:
   while (1) {
-    /* Cursor blink */
-    if ((gFrame % BLINK_PERIOD) == 0)
+    if (gFrame % BLINK_PERIOD == 0) {
       gCursorVisible = !gCursorVisible;
+      gDirty = TRUE;
+    }
 
     HandleMouse();
-    if (gKeyEx)
-      HandleKeyEx();
-    else
-      HandleKeySimple();
 
-    DrawDesktop();
+    if (gKeyEx)    HandleKeyEx();
+    else           HandleKeySimple();
+
+    if (gDirty) {
+      DrawDesktop();
+      gDirty = FALSE;
+    }
 
     gFrame++;
-    gBS->Stall(14000);   /* ~14ms ? ~71fps target */
+    gBS->Stall(14000);
   }
-
-  return EFI_SUCCESS; /* unreachable */
 }
