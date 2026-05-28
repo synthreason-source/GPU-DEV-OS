@@ -1,5 +1,6 @@
 miscellaneous build instructions:
 
+make C:\uefidev directory
 
 cd C:\uefidev
 
@@ -16,6 +17,9 @@ Expand-Archive -Path "C:\uefidev\BaseTools-win32.zip" -DestinationPath "C:\uefid
 
 Copy-Item "C:\uefidev\BaseTools-win32\edk2-BaseTools-win32-master\*" "C:\uefidev\edk2\BaseTools\Bin\Win32\" -Recurse -Force
 
+run setup.bat
+
+run edksetup.bat
 
 
 
