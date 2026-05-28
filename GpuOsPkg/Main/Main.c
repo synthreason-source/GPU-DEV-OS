@@ -21,7 +21,8 @@
 #include "Graphics.h"
 #include "Font.h"
 #include "PciGpu.h"
-
+#include "VFS.h"
+#include "Editor.h"
  /* ?? Constants ??????????????????????????????????????????????????????????? */
 #define MAX_WINDOWS     16
 #define TITLE_H         24
@@ -259,16 +260,19 @@ STATIC VOID CmdUptime(TERMINAL_WINDOW* W) {
 }
 
 STATIC VOID CmdLs(TERMINAL_WINDOW* W) {
-  TermPrintLine(W, "/boot/ (virtual)", COL_TEXT_CYAN);
-  TermPrintLine(W, " BOOTX64.EFI", COL_TEXT_WHITE);
-  TermPrintLine(W, " OVMF.fd", COL_TEXT_WHITE);
-  TermPrintLine(W, "/sys/ (virtual)", COL_TEXT_CYAN);
-  TermPrintLine(W, " gpu/bar0", COL_TEXT_WHITE);
-  TermPrintLine(W, " fb/framebuffer", COL_TEXT_WHITE);
-  TermPrintLine(W, " input/keyboard", COL_TEXT_WHITE);
-  TermPrintLine(W, " input/mouse", COL_TEXT_WHITE);
-}
+  TermPrintLine(W, "-- VFS Files --", COL_TEXT_CYAN);
+  const CHAR8* Files[VFS_MAX_FILES];
+  UINT32 Count = VfsListFiles(Files, VFS_MAX_FILES);
 
+  if (Count == 0) {
+    TermPrintLine(W, " (empty)", COL_TEXT_DIM);
+  }
+  else {
+    for (UINT32 i = 0; i < Count; i++) {
+      TermPrintLine(W, Files[i], COL_TEXT_WHITE);
+    }
+  }
+}
 STATIC VOID CmdAbout(TERMINAL_WINDOW* W) {
   TermPrintLine(W, "", COL_TEXT_GREEN);
   TermPrintLine(W, "  ??????? ??????? ???   ???", COL_TEXT_GREEN);
@@ -371,6 +375,17 @@ STATIC VOID RunCommand(TERMINAL_WINDOW* W, CONST CHAR8* RawCmd) {
   }
   else if (CmdIs(RawCmd, "calc"))     CmdCalc(W, CmdArg(RawCmd));
   else if (CmdIs(RawCmd, "color"))    CmdColor(W, CmdArg(RawCmd));
+  else if (CmdIs(RawCmd, "edit")) {
+    CONST CHAR8* Filename = CmdArg(RawCmd);
+    EDITOR Ed;
+
+    /* Initialize and run the modal editor blocking loop */
+    EditorInit(&Ed, &gFb, gKeySimple, Filename);
+    EditorRun(&Ed);
+
+    /* When the editor exits, force a full desktop redraw */
+    gDirty = TRUE;
+  }
   else if (CmdIs(RawCmd, "reboot")) {
     TermPrintLine(W, " Rebooting...", COL_TEXT_YELLOW);
     gRT->ResetSystem(EfiResetWarm, EFI_SUCCESS, 0, NULL);
@@ -747,7 +762,10 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
   SetMem(gWindows, sizeof(gWindows), 0);
 
   if (EFI_ERROR(GfxInit(gBS, &gFb))) return EFI_ABORTED;
-
+  /* Initialize Virtual Filesystem */
+  if (EFI_ERROR(VfsInit(gBS))) {
+    /* Handle allocation failure if necessary */
+  }
   GPU_INFO GpuInfo;
   SetMem(&GpuInfo, sizeof(GpuInfo), 0);
   FindAndMapGpu(gBS, &GpuInfo);
@@ -800,6 +818,7 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
     if (gDirty) {
       DrawDesktop();
+      GfxFlip(&gFb); /* Push the backbuffer to VRAM */
       gDirty = FALSE;
     }
 

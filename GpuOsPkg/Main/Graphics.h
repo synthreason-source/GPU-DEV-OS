@@ -1,5 +1,5 @@
 /**
- * Graphics.h — Bare-metal GPU framebuffer interface
+ * Graphics.h ? Bare-metal GPU framebuffer interface
  * Direct VRAM pixel writes, no OS, no DRM/KMS, no X11
  */
 #ifndef GRAPHICS_H
@@ -8,15 +8,22 @@
 #include <Uefi.h>
 #include <Protocol/GraphicsOutput.h>
 
-/* Framebuffer descriptor — survives ExitBootServices */
+/* Framebuffer descriptor ? survives ExitBootServices */
+/* Framebuffer descriptor */
 typedef struct {
-    UINT32  *FrameBuffer;       /* Direct pointer into GPU VRAM scanout */
-    UINT32   Width;
-    UINT32   Height;
-    UINT32   PixelsPerScanLine; /* May be larger than Width (stride) */
+  UINT32* FrameBuffer;       /* Direct pointer into GPU VRAM scanout */
+  UINT32* BackBuffer;        /* RAM buffer for double-buffering */
+  UINT32   Width;
+  UINT32   Height;
+  UINT32   PixelsPerScanLine;
 } GPU_FB;
 
-/* Color macros — BGRA format (what GOP/UEFI uses) */
+/* ... existing declarations ... */
+
+/** Copy the backbuffer to the live VRAM framebuffer */
+VOID GfxFlip(GPU_FB* Fb);
+
+/* Color macros ? BGRA format (what GOP/UEFI uses) */
 #define COLOR_BGRA(b,g,r)   ((UINT32)(((b)&0xFF) | (((g)&0xFF)<<8) | (((r)&0xFF)<<16) | 0xFF000000))
 #define COLOR_BLACK         0xFF000000
 #define COLOR_WHITE         0xFFFFFFFF
@@ -33,7 +40,7 @@ typedef struct {
 #define COLOR_DIM           COLOR_BGRA(120,120,120)
 
 /**
- * GfxInit — Locate GOP protocol, select best resolution, capture framebuffer.
+ * GfxInit ? Locate GOP protocol, select best resolution, capture framebuffer.
  * Must be called BEFORE ExitBootServices.
  * @param BS   Boot services table pointer
  * @param Fb   Output: populated GPU_FB descriptor

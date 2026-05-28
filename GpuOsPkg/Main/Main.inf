@@ -11,6 +11,8 @@
   Graphics.c
   Font.c
   PciGpu.c
+  Editor.c
+  VFS.c
 
 [Packages]
   MdePkg/MdePkg.dec

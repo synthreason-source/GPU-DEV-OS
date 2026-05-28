@@ -1,5 +1,5 @@
 /**
- * Graphics.c — Direct GPU framebuffer pixel operations
+ * Graphics.c ? Direct GPU framebuffer pixel operations
  * No OS, no GPU driver, no DRM. Pure VRAM writes via GOP pointer.
  */
 #include "Graphics.h"
@@ -30,11 +30,17 @@ EFI_STATUS GfxInit(EFI_BOOT_SERVICES *BS, GPU_FB *Fb) {
     }
     Gop->SetMode(Gop, BestMode);
 
-    /* Capture live framebuffer pointer — valid after ExitBootServices */
-    Fb->FrameBuffer       = (UINT32*)(UINTN)Gop->Mode->FrameBufferBase;
-    Fb->Width             = Gop->Mode->Info->HorizontalResolution;
-    Fb->Height            = Gop->Mode->Info->VerticalResolution;
+    /* Capture live framebuffer pointer ? valid after ExitBootServices */
+    Fb->FrameBuffer = (UINT32*)(UINTN)Gop->Mode->FrameBufferBase;
+    Fb->Width = Gop->Mode->Info->HorizontalResolution;
+    Fb->Height = Gop->Mode->Info->VerticalResolution;
     Fb->PixelsPerScanLine = Gop->Mode->Info->PixelsPerScanLine;
+
+    /* Allocate RAM BackBuffer to prevent flicker */
+    UINTN BufferSize = Fb->Height * Fb->PixelsPerScanLine * sizeof(UINT32);
+    Status = BS->AllocatePool(EfiRuntimeServicesData, BufferSize, (VOID**)&Fb->BackBuffer);
+    if (EFI_ERROR(Status)) return Status;
+
     return EFI_SUCCESS;
 }
 
@@ -52,7 +58,10 @@ VOID GfxFillRect(GPU_FB *Fb, UINT32 X, UINT32 Y, UINT32 W, UINT32 H, UINT32 Colo
             *Row++ = Color;
     }
 }
-
+/* Implement GfxFlip */
+VOID GfxFlip(GPU_FB* Fb) {
+  CopyMem(Fb->FrameBuffer, Fb->BackBuffer, Fb->Height * Fb->PixelsPerScanLine * sizeof(UINT32));
+}
 VOID GfxDrawRect(GPU_FB *Fb, UINT32 X, UINT32 Y, UINT32 W, UINT32 H, UINT32 Color) {
     GfxFillRect(Fb, X,       Y,       W, 1, Color); /* top    */
     GfxFillRect(Fb, X,       Y+H-1,   W, 1, Color); /* bottom */
@@ -63,22 +72,24 @@ VOID GfxDrawRect(GPU_FB *Fb, UINT32 X, UINT32 Y, UINT32 W, UINT32 H, UINT32 Colo
 VOID GfxClear(GPU_FB *Fb, UINT32 Color) {
     GfxFillRect(Fb, 0, 0, Fb->Width, Fb->Height, Color);
 }
+VOID GfxGradientBackground(GPU_FB* Fb, UINT32 ColorTop, UINT32 ColorBottom) {
+  UINT8 Tr = (ColorTop >> 16) & 0xFF;
+  UINT8 Tg = (ColorTop >> 8) & 0xFF;
+  UINT8 Tb = (ColorTop >> 0) & 0xFF;
+  UINT8 Br = (ColorBottom >> 16) & 0xFF;
+  UINT8 Bg = (ColorBottom >> 8) & 0xFF;
+  UINT8 Bb = (ColorBottom >> 0) & 0xFF;
 
-VOID GfxGradientBackground(GPU_FB *Fb, UINT32 ColorTop, UINT32 ColorBottom) {
-    UINT8 Tr = (ColorTop  >> 16) & 0xFF;
-    UINT8 Tg = (ColorTop  >>  8) & 0xFF;
-    UINT8 Tb = (ColorTop  >>  0) & 0xFF;
-    UINT8 Br = (ColorBottom>>16) & 0xFF;
-    UINT8 Bg = (ColorBottom>> 8) & 0xFF;
-    UINT8 Bb = (ColorBottom>> 0) & 0xFF;
+  for (UINT32 Y = 0; Y < Fb->Height; Y++) {
+    UINT32 t = (Y * 255) / Fb->Height;
+    UINT8  R = (UINT8)(Tr + (((INT32)Br - Tr) * t) / 255);
+    UINT8  G = (UINT8)(Tg + (((INT32)Bg - Tg) * t) / 255);
+    UINT8  B = (UINT8)(Tb + (((INT32)Bb - Tb) * t) / 255);
+    UINT32 C = 0xFF000000 | (R << 16) | (G << 8) | B;
 
-    for (UINT32 Y = 0; Y < Fb->Height; Y++) {
-        UINT32 t  = (Y * 255) / Fb->Height;
-        UINT8  R  = (UINT8)(Tr + (((INT32)Br - Tr) * t) / 255);
-        UINT8  G  = (UINT8)(Tg + (((INT32)Bg - Tg) * t) / 255);
-        UINT8  B  = (UINT8)(Tb + (((INT32)Bb - Tb) * t) / 255);
-        UINT32 C  = 0xFF000000 | (R<<16) | (G<<8) | B;
-        for (UINT32 X = 0; X < Fb->Width; X++)
-            Fb->FrameBuffer[Y * Fb->PixelsPerScanLine + X] = C;
+    for (UINT32 X = 0; X < Fb->Width; X++) {
+      /* Update to write to BackBuffer instead of FrameBuffer */
+      Fb->BackBuffer[Y * Fb->PixelsPerScanLine + X] = C;
     }
+  }
 }
