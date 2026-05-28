@@ -135,7 +135,7 @@ STATIC VOID SpawnTerminal(VOID);
 
 STATIC VOID VfsInit(VOID) {
   SetMem(gVfs, sizeof(gVfs), 0);
-  
+
   gVfs[0].Used = TRUE;
   AsciiStrnCpyS(gVfs[0].Name, MAX_FILE_NAME, "welcome.txt", MAX_FILE_NAME - 1);
   AsciiStrnCpyS(gVfs[0].Content, MAX_FILE_SIZE, "Welcome to GpuOS Real-Time Shell!\nThis environment features an in-memory VFS.\nType 'help' to see system capabilities.", MAX_FILE_SIZE - 1);
@@ -347,7 +347,7 @@ STATIC VOID CmdCat(TERMINAL_WINDOW* W, CONST CHAR8* Arg) {
     TermPrintLine(W, " Target file not found inside VFS.", COL_TEXT_RED);
     return;
   }
-  
+
   CHAR8 LineBuf[TERM_LINE_LEN];
   UINTN LineIdx = 0;
   for (UINTN i = 0; i < File->Size; i++) {
@@ -355,7 +355,8 @@ STATIC VOID CmdCat(TERMINAL_WINDOW* W, CONST CHAR8* Arg) {
       LineBuf[LineIdx] = 0;
       TermPrintLine(W, LineBuf, COL_TEXT_WHITE);
       LineIdx = 0;
-    } else if (File->Content[i] != '\r') {
+    }
+    else if (File->Content[i] != '\r') {
       LineBuf[LineIdx++] = File->Content[i];
     }
   }
@@ -379,7 +380,8 @@ STATIC VOID CmdEdit(TERMINAL_WINDOW* W, CONST CHAR8* Arg) {
   if (File) {
     AsciiStrnCpyS(W->EditBuf, MAX_FILE_SIZE, File->Content, MAX_FILE_SIZE - 1);
     W->EditLen = File->Size;
-  } else {
+  }
+  else {
     W->EditLen = 0;
   }
   AsciiSPrint(W->Title, sizeof(W->Title), "Editor: %a", W->EditFileName);
@@ -657,419 +659,423 @@ STATIC VOID DrawWindow(TERMINAL_WINDOW* W) {
         GfxFillRect(&gFb, CursorDrawX, CursorDrawY, FONT_W - 1, FONT_H - 2, COL_CURSOR);
       }
     }
-  else {
-    /* --- SHELL MODE RUNTIME VIEW --- */
-    UINTN VisLines = (UINTN)(TextBot - TY) / FONT_H;
-    UINTN StartLine = W->ScrollTop;
-    if (StartLine + VisLines > W->LineCount)
-      StartLine = (W->LineCount > VisLines) ? W->LineCount - VisLines : 0;
+    else {
+      /* --- SHELL MODE RUNTIME VIEW --- */
+      UINTN VisLines = (UINTN)(TextBot - TY) / FONT_H;
+      UINTN StartLine = W->ScrollTop;
+      if (StartLine + VisLines > W->LineCount)
+        StartLine = (W->LineCount > VisLines) ? W->LineCount - VisLines : 0;
 
-    UINT32 DrawY = (UINT32)TY;
-    for (UINTN i = StartLine; i < W->LineCount && (INT32)DrawY + FONT_H <= TextBot; i++) {
-      UINTN li = i % TERM_BUF_LINES;
+      UINT32 DrawY = (UINT32)TY;
+      for (UINTN i = StartLine; i < W->LineCount && (INT32)DrawY + FONT_H <= TextBot; i++) {
+        UINTN li = i % TERM_BUF_LINES;
 
-      CHAR8 ClipBuf[TERM_LINE_LEN];
-      AsciiStrnCpyS(ClipBuf, sizeof(ClipBuf), W->Lines[li].Text, MaxCharsPerLine);
+        CHAR8 ClipBuf[TERM_LINE_LEN];
+        AsciiStrnCpyS(ClipBuf, sizeof(ClipBuf), W->Lines[li].Text, MaxCharsPerLine);
 
-      FontDrawString(&gFb, TX, DrawY, ClipBuf, W->Lines[li].Color, COL_WIN_BG);
-      DrawY += FONT_H;
-    }
+        FontDrawString(&gFb, TX, DrawY, ClipBuf, W->Lines[li].Color, COL_WIN_BG);
+        DrawY += FONT_H;
+      }
 
-    GfxFillRect(&gFb, W->X + 1, InputY - 2, W->W - 2, FONT_H + 6, 0xFF0A0A10);
-    GfxFillRect(&gFb, W->X + 1, InputY - 2, W->W - 2, 1, 0xFF1A2838);
+      GfxFillRect(&gFb, W->X + 1, InputY - 2, W->W - 2, FONT_H + 6, 0xFF0A0A10);
+      GfxFillRect(&gFb, W->X + 1, InputY - 2, W->W - 2, 1, 0xFF1A2838);
 
-    FontDrawString(&gFb, TX, InputY, "$ ", COL_TEXT_GREEN, 0xFF0A0A10);
-    UINT32 PromptW = 2 * FONT_W;
+      FontDrawString(&gFb, TX, InputY, "$ ", COL_TEXT_GREEN, 0xFF0A0A10);
+      UINT32 PromptW = 2 * FONT_W;
 
-    UINTN  CmdMaxChars = (UINTN)(TRightX - TX - (INT32)PromptW) / FONT_W;
-    CHAR8  CmdClip[CMD_BUF_LEN];
-    AsciiStrnCpyS(CmdClip, sizeof(CmdClip), W->CmdBuf,
-      CmdMaxChars < CMD_BUF_LEN - 1 ? CmdMaxChars : CMD_BUF_LEN - 1);
+      UINTN  CmdMaxChars = (UINTN)(TRightX - TX - (INT32)PromptW) / FONT_W;
+      CHAR8  CmdClip[CMD_BUF_LEN];
+      AsciiStrnCpyS(CmdClip, sizeof(CmdClip), W->CmdBuf,
+        CmdMaxChars < CMD_BUF_LEN - 1 ? CmdMaxChars : CMD_BUF_LEN - 1);
 
-    FontDrawString(&gFb, TX + PromptW, InputY, CmdClip, COL_TEXT_WHITE, 0xFF0A0A10);
+      FontDrawString(&gFb, TX + PromptW, InputY, CmdClip, COL_TEXT_WHITE, 0xFF0A0A10);
 
-    if (W->Focused && gCursorVisible) {
-      UINTN  VisLen = AsciiStrnLenS(CmdClip, sizeof(CmdClip));
-      UINT32 CursorX = (UINT32)(TX + PromptW) + (UINT32)(VisLen * FONT_W);
-      if ((INT32)CursorX + FONT_W <= TRightX)
-        GfxFillRect(&gFb, CursorX, InputY, FONT_W - 1, FONT_H - 2, COL_CURSOR);
-    }
-  }
-}
-
-STATIC VOID DrawTaskbar(VOID) {
-  UINT32 TBY = gFb.Height - TASKBAR_H;
-
-  GfxFillRect(&gFb, 0, TBY, gFb.Width, TASKBAR_H, COL_TASKBAR);
-  GfxFillRect(&gFb, 0, TBY, gFb.Width, 1, 0xFF1A2840);
-
-  /* Launch button */
-  BOOLEAN LaunchHover = (gMouseX >= TASKBAR_BTN_X &&
-    gMouseX <= TASKBAR_BTN_X + TASKBAR_BTN_W &&
-    gMouseY >= (INT32)TBY + 5 &&
-    gMouseY <= (INT32)TBY + 5 + TASKBAR_BTN_H);
-  UINT32 BtnBg = LaunchHover ? 0xFF003322 : COL_TASKBAR_BTN;
-  UINT32 BtnBorder = LaunchHover ? COL_TASKBAR_HILT : COL_WIN_BORDER;
-  GfxFillRect(&gFb, TASKBAR_BTN_X, TBY + 5, TASKBAR_BTN_W, TASKBAR_BTN_H, BtnBg);
-  GfxDrawRect(&gFb, TASKBAR_BTN_X, TBY + 5, TASKBAR_BTN_W, TASKBAR_BTN_H, BtnBorder);
-  FontDrawString(&gFb, TASKBAR_BTN_X + 14, TBY + 11,
-    "+ Terminal", COL_TEXT_GREEN, BtnBg);
-
-  /* Window pills */
-  UINT32 PillX = TASKBAR_BTN_X + TASKBAR_BTN_W + 10;
-  for (UINTN i = 0; i < gWindowCount; i++) {
-    TERMINAL_WINDOW* W = &gWindows[i];
-    if (!W->Active) continue;
-    if (PillX + 110 > gFb.Width - 80) break;
-    UINT32 PillBg = W->Focused ? COL_PILL_ACTIVE : COL_PILL_BG;
-    UINT32 PillBorder = W->Focused ? COL_WIN_FOCUS : COL_WIN_BORDER;
-    GfxFillRect(&gFb, PillX, TBY + 6, 108, TASKBAR_BTN_H - 2, PillBg);
-    GfxDrawRect(&gFb, PillX, TBY + 6, 108, TASKBAR_BTN_H - 2, PillBorder);
-    FontDrawString(&gFb, PillX + 6, TBY + 11,
-      W->Title, W->Focused ? COL_TEXT_WHITE : COL_TEXT_DIM, PillBg);
-    PillX += 114;
-  }
-
-  /* Clock */
-  CHAR8  ClockBuf[24];
-  UINTN  secs = gFrame / 60;
-  AsciiSPrint(ClockBuf, sizeof(ClockBuf),
-    "%02d:%02d", (int)(secs / 60), (int)(secs % 60));
-  UINT32 ClockX = gFb.Width - 60;
-  FontDrawString(&gFb, ClockX, TBY + 11, ClockBuf, COL_TEXT_DIM, COL_TASKBAR);
-}
-
-STATIC VOID DrawDesktop(VOID) {
-  GfxGradientBackground(&gFb, COL_DESKTOP_TOP, COL_DESKTOP_BOT);
-  for (UINTN i = 0; i < gWindowCount; i++)
-    DrawWindow(&gWindows[i]);
-  DrawTaskbar();
-
-  /* Mouse cursor */
-  INT32 MX = gMouseX, MY = gMouseY;
-  for (INT32 row = 0; row < 14; row++)
-    for (INT32 col = 0; col <= row && col < 8; col++)
-      if (row < 10 || col < 10 - row)
-        GfxPutPixel(&gFb, MX + col, MY + row, 0xFFFFFFFF);
-  for (INT32 row = 1; row < 15; row++)
-    for (INT32 col = 1; col <= row && col < 9; col++) {
-      UINT32 cur = gFb.FrameBuffer[(MY + row) * gFb.PixelsPerScanLine + (MX + col)];
-      if (cur != 0xFFFFFFFF)
-        GfxPutPixel(&gFb, MX + col, MY + row,
-          ((cur >> 1) & 0x7F7F7F7F) | 0xFF000000);
-    }
-}
-
-/* ??????????????????????????????????????????????????????????????????????????
-   INPUT HANDLING
-   ?????????????????????????????????????????????????????????????????????????? */
-
-STATIC VOID HandleMouse(VOID) {
-  if (!gMouse) return;
-  EFI_SIMPLE_POINTER_STATE State;
-  if (EFI_ERROR(gMouse->GetState(gMouse, &State))) return;
-
-  gMouseX += (INT32)(State.RelativeMovementX / 1000);
-  gMouseY += (INT32)(State.RelativeMovementY / 1000);
-  if (gMouseX < 0)                  gMouseX = 0;
-  if (gMouseY < 0)                  gMouseY = 0;
-  if (gMouseX >= (INT32)gFb.Width)  gMouseX = (INT32)gFb.Width - 1;
-  if (gMouseY >= (INT32)gFb.Height) gMouseY = (INT32)gFb.Height - 1;
-
-  BOOLEAN LeftNow = State.LeftButton;
-  BOOLEAN LeftEdge = LeftNow && !gMouseLeftLast;
-
-  if (!LeftNow)
-    for (UINTN i = 0; i < gWindowCount; i++) gWindows[i].Dragging = FALSE;
-
-  if (LeftNow && !LeftEdge) {
-    for (UINTN i = 0; i < gWindowCount; i++) {
-      TERMINAL_WINDOW* W = &gWindows[i];
-      if (W->Active && W->Dragging) {
-        W->X = gMouseX - W->DragOffX;
-        W->Y = gMouseY - W->DragOffY;
-        gDirty = TRUE;
+      if (W->Focused && gCursorVisible) {
+        UINTN  VisLen = AsciiStrnLenS(CmdClip, sizeof(CmdClip));
+        UINT32 CursorX = (UINT32)(TX + PromptW) + (UINT32)(VisLen * FONT_W);
+        if ((INT32)CursorX + FONT_W <= TRightX)
+          GfxFillRect(&gFb, CursorX, InputY, FONT_W - 1, FONT_H - 2, COL_CURSOR);
       }
     }
   }
-
-  if (LeftEdge) {
+}
+  STATIC VOID DrawTaskbar(VOID) {
     UINT32 TBY = gFb.Height - TASKBAR_H;
 
-    if (gMouseY >= (INT32)TBY + 5 &&
-      gMouseY <= (INT32)TBY + 5 + TASKBAR_BTN_H &&
-      gMouseX >= TASKBAR_BTN_X &&
-      gMouseX <= TASKBAR_BTN_X + TASKBAR_BTN_W) {
-      SpawnTerminal();
-      goto done;
+    GfxFillRect(&gFb, 0, TBY, gFb.Width, TASKBAR_H, COL_TASKBAR);
+    GfxFillRect(&gFb, 0, TBY, gFb.Width, 1, 0xFF1A2840);
+
+    /* Launch button */
+    BOOLEAN LaunchHover = (gMouseX >= TASKBAR_BTN_X &&
+      gMouseX <= TASKBAR_BTN_X + TASKBAR_BTN_W &&
+      gMouseY >= (INT32)TBY + 5 &&
+      gMouseY <= (INT32)TBY + 5 + TASKBAR_BTN_H);
+    UINT32 BtnBg = LaunchHover ? 0xFF003322 : COL_TASKBAR_BTN;
+    UINT32 BtnBorder = LaunchHover ? COL_TASKBAR_HILT : COL_WIN_BORDER;
+    GfxFillRect(&gFb, TASKBAR_BTN_X, TBY + 5, TASKBAR_BTN_W, TASKBAR_BTN_H, BtnBg);
+    GfxDrawRect(&gFb, TASKBAR_BTN_X, TBY + 5, TASKBAR_BTN_W, TASKBAR_BTN_H, BtnBorder);
+    FontDrawString(&gFb, TASKBAR_BTN_X + 14, TBY + 11,
+      "+ Terminal", COL_TEXT_GREEN, BtnBg);
+
+    /* Window pills */
+    UINT32 PillX = TASKBAR_BTN_X + TASKBAR_BTN_W + 10;
+    for (UINTN i = 0; i < gWindowCount; i++) {
+      TERMINAL_WINDOW* W = &gWindows[i];
+      if (!W->Active) continue;
+      if (PillX + 110 > gFb.Width - 80) break;
+      UINT32 PillBg = W->Focused ? COL_PILL_ACTIVE : COL_PILL_BG;
+      UINT32 PillBorder = W->Focused ? COL_WIN_FOCUS : COL_WIN_BORDER;
+      GfxFillRect(&gFb, PillX, TBY + 6, 108, TASKBAR_BTN_H - 2, PillBg);
+      GfxDrawRect(&gFb, PillX, TBY + 6, 108, TASKBAR_BTN_H - 2, PillBorder);
+      FontDrawString(&gFb, PillX + 6, TBY + 11,
+        W->Title, W->Focused ? COL_TEXT_WHITE : COL_TEXT_DIM, PillBg);
+      PillX += 114;
     }
 
-    if (gMouseY >= (INT32)(TBY + 6) &&
-      gMouseY <= (INT32)(TBY + 6 + TASKBAR_BTN_H)) {
-      UINT32 PillX = TASKBAR_BTN_X + TASKBAR_BTN_W + 10;
+    /* Clock */
+    CHAR8  ClockBuf[24];
+    UINTN  secs = gFrame / 60;
+    AsciiSPrint(ClockBuf, sizeof(ClockBuf),
+      "%02d:%02d", (int)(secs / 60), (int)(secs % 60));
+    UINT32 ClockX = gFb.Width - 60;
+    FontDrawString(&gFb, ClockX, TBY + 11, ClockBuf, COL_TEXT_DIM, COL_TASKBAR);
+  }
+
+  STATIC VOID DrawDesktop(VOID) {
+    GfxGradientBackground(&gFb, COL_DESKTOP_TOP, COL_DESKTOP_BOT);
+    for (UINTN i = 0; i < gWindowCount; i++)
+      DrawWindow(&gWindows[i]);
+    DrawTaskbar();
+
+    /* Mouse cursor */
+    INT32 MX = gMouseX, MY = gMouseY;
+    for (INT32 row = 0; row < 14; row++)
+      for (INT32 col = 0; col <= row && col < 8; col++)
+        if (row < 10 || col < 10 - row)
+          GfxPutPixel(&gFb, MX + col, MY + row, 0xFFFFFFFF);
+    for (INT32 row = 1; row < 15; row++)
+      for (INT32 col = 1; col <= row && col < 9; col++) {
+        UINT32 cur = gFb.FrameBuffer[(MY + row) * gFb.PixelsPerScanLine + (MX + col)];
+        if (cur != 0xFFFFFFFF)
+          GfxPutPixel(&gFb, MX + col, MY + row,
+            ((cur >> 1) & 0x7F7F7F7F) | 0xFF000000);
+      }
+  }
+  /* ??????????????????????????????????????????????????????????????????????????
+     INPUT HANDLING
+     ?????????????????????????????????????????????????????????????????????????? */
+
+  STATIC VOID HandleMouse(VOID) {
+    if (!gMouse) return;
+    EFI_SIMPLE_POINTER_STATE State;
+    if (EFI_ERROR(gMouse->GetState(gMouse, &State))) return;
+
+    gMouseX += (INT32)(State.RelativeMovementX / 1000);
+    gMouseY += (INT32)(State.RelativeMovementY / 1000);
+    if (gMouseX < 0)                  gMouseX = 0;
+    if (gMouseY < 0)                  gMouseY = 0;
+    if (gMouseX >= (INT32)gFb.Width)  gMouseX = (INT32)gFb.Width - 1;
+    if (gMouseY >= (INT32)gFb.Height) gMouseY = (INT32)gFb.Height - 1;
+
+    BOOLEAN LeftNow = State.LeftButton;
+    BOOLEAN LeftEdge = LeftNow && !gMouseLeftLast;
+
+    if (!LeftNow)
+      for (UINTN i = 0; i < gWindowCount; i++) gWindows[i].Dragging = FALSE;
+
+    if (LeftNow && !LeftEdge) {
       for (UINTN i = 0; i < gWindowCount; i++) {
-        if (!gWindows[i].Active) continue;
-        if ((INT32)gMouseX >= (INT32)PillX &&
-          (INT32)gMouseX <= (INT32)PillX + 108) {
-          BringToFront(i);
+        TERMINAL_WINDOW* W = &gWindows[i];
+        if (W->Active && W->Dragging) {
+          W->X = gMouseX - W->DragOffX;
+          W->Y = gMouseY - W->DragOffY;
+          gDirty = TRUE;
+        }
+      }
+    }
+
+    if (LeftEdge) {
+      UINT32 TBY = gFb.Height - TASKBAR_H;
+
+      if (gMouseY >= (INT32)TBY + 5 &&
+        gMouseY <= (INT32)TBY + 5 + TASKBAR_BTN_H &&
+        gMouseX >= TASKBAR_BTN_X &&
+        gMouseX <= TASKBAR_BTN_X + TASKBAR_BTN_W) {
+        SpawnTerminal();
+        goto done;
+      }
+
+      if (gMouseY >= (INT32)(TBY + 6) &&
+        gMouseY <= (INT32)(TBY + 6 + TASKBAR_BTN_H)) {
+        UINT32 PillX = TASKBAR_BTN_X + TASKBAR_BTN_W + 10;
+        for (UINTN i = 0; i < gWindowCount; i++) {
+          if (!gWindows[i].Active) continue;
+          if ((INT32)gMouseX >= (INT32)PillX &&
+            (INT32)gMouseX <= (INT32)PillX + 108) {
+            BringToFront(i);
+            FocusOnly(gWindowCount - 1);
+            goto done;
+          }
+          PillX += 114;
+        }
+      }
+
+      for (INTN i = (INTN)gWindowCount - 1; i >= 0; i--) {
+        TERMINAL_WINDOW* W = &gWindows[i];
+        if (!W->Active) continue;
+
+        INT32 CX = W->X + W->W - CLOSE_BTN_W - 3;
+        INT32 CY = W->Y + 3;
+        if (gMouseX >= CX && gMouseX <= CX + CLOSE_BTN_W &&
+          gMouseY >= CY && gMouseY <= CY + CLOSE_BTN_H) {
+          W->Active = W->Focused = W->Dragging = FALSE;
+          for (INTN k = (INTN)gWindowCount - 1; k >= 0; k--)
+            if (gWindows[k].Active) { gWindows[k].Focused = TRUE; break; }
+          gDirty = TRUE;
+          goto done;
+        }
+
+        if (gMouseX >= W->X && gMouseX <= W->X + W->W &&
+          gMouseY >= W->Y && gMouseY <= W->Y + TITLE_H) {
+          BringToFront((UINTN)i);
+          FocusOnly(gWindowCount - 1);
+          TERMINAL_WINDOW* Top = &gWindows[gWindowCount - 1];
+          Top->Dragging = TRUE;
+          Top->DragOffX = gMouseX - Top->X;
+          Top->DragOffY = gMouseY - Top->Y;
+          goto done;
+        }
+
+        if (gMouseX >= W->X && gMouseX <= W->X + W->W &&
+          gMouseY >= W->Y && gMouseY <= W->Y + W->H) {
+          BringToFront((UINTN)i);
           FocusOnly(gWindowCount - 1);
           goto done;
         }
-        PillX += 114;
       }
     }
 
-    for (INTN i = (INTN)gWindowCount - 1; i >= 0; i--) {
-      TERMINAL_WINDOW* W = &gWindows[i];
-      if (!W->Active) continue;
-
-      INT32 CX = W->X + W->W - CLOSE_BTN_W - 3;
-      INT32 CY = W->Y + 3;
-      if (gMouseX >= CX && gMouseX <= CX + CLOSE_BTN_W &&
-        gMouseY >= CY && gMouseY <= CY + CLOSE_BTN_H) {
-        W->Active = W->Focused = W->Dragging = FALSE;
-        for (INTN k = (INTN)gWindowCount - 1; k >= 0; k--)
-          if (gWindows[k].Active) { gWindows[k].Focused = TRUE; break; }
-        gDirty = TRUE;
-        goto done;
-      }
-
-      if (gMouseX >= W->X && gMouseX <= W->X + W->W &&
-        gMouseY >= W->Y && gMouseY <= W->Y + TITLE_H) {
-        BringToFront((UINTN)i);
-        FocusOnly(gWindowCount - 1);
-        TERMINAL_WINDOW* Top = &gWindows[gWindowCount - 1];
-        Top->Dragging = TRUE;
-        Top->DragOffX = gMouseX - Top->X;
-        Top->DragOffY = gMouseY - Top->Y;
-        goto done;
-      }
-
-      if (gMouseX >= W->X && gMouseX <= W->X + W->W &&
-        gMouseY >= W->Y && gMouseY <= W->Y + W->H) {
-        BringToFront((UINTN)i);
-        FocusOnly(gWindowCount - 1);
-        goto done;
-      }
-    }
-  }
-
-done:
-  gMouseLeftLast = LeftNow;
-  gMouseLeftHeld = LeftNow;
-  gDirty = TRUE;
-}
-
-
-STATIC VOID HandleKeySimple (VOID) {
-  if (!gKeySimple || gWindowCount == 0) return;
-
-  EFI_INPUT_KEY Key;
-  EFI_STATUS    Status;
-
-  while (TRUE) {
-    Status = gKeySimple->ReadKeyStroke(gKeySimple, &Key);
-    if (Status == EFI_NOT_READY) break;
-    if (EFI_ERROR(Status))       break;
-
-    TERMINAL_WINDOW *W = NULL;
-    for (INTN k = (INTN)gWindowCount - 1; k >= 0; k--)
-      if (gWindows[k].Active && gWindows[k].Focused) { W = &gWindows[k]; break; }
-    if (!W) continue;
-
-    if (W->EditorMode) {
-      /* --- KEY HANDLING: EDITOR ROUTINE WITH ARROW NAVIGATION --- */
-      if (Key.ScanCode == SCAN_ESC) {
-        VfsSave(W->EditFileName, W->EditBuf, W->EditLen);
-        W->EditorMode = FALSE;
-        AsciiSPrint(W->Title, sizeof(W->Title), "Terminal %d", (int)(W - gWindows + 1));
-        TermPrintLine(W, " File system context synchronized and updated.", COL_TEXT_GREEN);
-      }
-      /* Arrow Left */
-      else if (Key.ScanCode == SCAN_LEFT) {
-        if (W->EditCursor > 0) {
-          W->EditCursor--;
-        }
-      }
-      /* Arrow Right */
-      else if (Key.ScanCode == SCAN_RIGHT) {
-        if (W->EditCursor < W->EditLen) {
-          W->EditCursor++;
-        }
-      }
-      /* Backspace (Delete character behind cursor) */
-      else if (Key.UnicodeChar == 0x0008) {
-        if (W->EditCursor > 0 && W->EditLen > 0) {
-          // Shift memory left to close the gap
-          for (UINTN i = W->EditCursor - 1; i < W->EditLen - 1; i++) {
-            W->EditBuf[i] = W->EditBuf[i + 1];
-          }
-          W->EditCursor--;
-          W->EditLen--;
-          W->EditBuf[W->EditLen] = 0;
-        }
-      }
-      /* Enter / Newline (Insert newline at cursor) */
-      else if (Key.UnicodeChar == 0x000D) {
-        if (W->EditLen < MAX_FILE_SIZE - 1) {
-          // Shift memory right to make room
-          for (UINTN i = W->EditLen; i > W->EditCursor; i--) {
-            W->EditBuf[i] = W->EditBuf[i - 1];
-          }
-          W->EditBuf[W->EditCursor++] = '\n';
-          W->EditLen++;
-          W->EditBuf[W->EditLen] = 0;
-        }
-      }
-      /* Printable Characters (Insert char at cursor) */
-      else if (Key.UnicodeChar >= 0x20 && Key.UnicodeChar <= 0x7E) {
-        if (W->EditLen < MAX_FILE_SIZE - 1) {
-          // Shift memory right to make room
-          for (UINTN i = W->EditLen; i > W->EditCursor; i--) {
-            W->EditBuf[i] = W->EditBuf[i - 1];
-          }
-          W->EditBuf[W->EditCursor++] = (CHAR8)Key.UnicodeChar;
-          W->EditLen++;
-          W->EditBuf[W->EditLen] = 0;
-        }
-      }
-    }
-    else {
-      /* --- KEY HANDLING: CORE SHELL ROUTINE --- */
-      if (Key.UnicodeChar == 0x0008) {
-        if (W->CmdLen > 0) W->CmdBuf[--W->CmdLen] = 0;
-      } else if (Key.UnicodeChar == 0x000D) {
-        W->CmdBuf[W->CmdLen] = 0;
-        RunCommand(W, W->CmdBuf);
-        SetMem(W->CmdBuf, CMD_BUF_LEN, 0);
-        W->CmdLen = 0;
-      } else if (Key.ScanCode == SCAN_ESC) {
-        SetMem(W->CmdBuf, CMD_BUF_LEN, 0);
-        W->CmdLen = 0;
-      } else if (Key.ScanCode == SCAN_UP && W->ScrollTop > 0) {
-        W->ScrollTop--;
-      } else if (Key.ScanCode == SCAN_DOWN && W->ScrollTop < W->LineCount) {
-        W->ScrollTop++;
-      } else if (Key.UnicodeChar >= 0x20 && Key.UnicodeChar <= 0x7E &&
-                 W->CmdLen < CMD_BUF_LEN - 1) {
-        W->CmdBuf[W->CmdLen++] = (CHAR8)Key.UnicodeChar;
-        W->CmdBuf[W->CmdLen]   = 0;
-      }
-    }
-
+  done:
+    gMouseLeftLast = LeftNow;
+    gMouseLeftHeld = LeftNow;
     gDirty = TRUE;
   }
-}
 
-/* ??????????????????????????????????????????????????????????????????????????
-   UEFI ENTRY POINT
-   ?????????????????????????????????????????????????????????????????????????? */
 
-EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
-  (VOID)ImageHandle;
-  SetMem(&gFb, sizeof(gFb), 0);
-  SetMem(gWindows, sizeof(gWindows), 0);
-  /* Initialize File System Layer */
-  if (EFI_ERROR(GfxInit(gBS, &gFb))) return EFI_ABORTED;
+  STATIC VOID HandleKeySimple(VOID) {
+    if (!gKeySimple || gWindowCount == 0) return;
 
-  GPU_INFO GpuInfo;
-  SetMem(&GpuInfo, sizeof(GpuInfo), 0);
-  FindAndMapGpu(gBS, &GpuInfo);
+    EFI_INPUT_KEY Key;
+    EFI_STATUS    Status;
 
-  /* ??? ADD DOUBLE BUFFERING ALLOCATION HERE ??? */
-  // 1. Save the genuine hardware VRAM address
-  gHardwareVram = gFb.FrameBuffer;
+    while (TRUE) {
+      Status = gKeySimple->ReadKeyStroke(gKeySimple, &Key);
+      if (Status == EFI_NOT_READY) break;
+      if (EFI_ERROR(Status))       break;
 
-  // 2. Calculate total screen buffer size in bytes
-  UINTN FrameBufferSize = gFb.PixelsPerScanLine * gFb.Height * sizeof(UINT32);
-  VOID* BackBufferRAM = NULL;
+      TERMINAL_WINDOW* W = NULL;
+      for (INTN k = (INTN)gWindowCount - 1; k >= 0; k--)
+        if (gWindows[k].Active && gWindows[k].Focused) { W = &gWindows[k]; break; }
+      if (!W) continue;
 
-  // 3. Allocate a fast, cacheable buffer in standard system RAM
-  EFI_STATUS BufferStatus = gBS->AllocatePool(EfiBootServicesData, FrameBufferSize, &BackBufferRAM);
-  if (!EFI_ERROR(BufferStatus)) {
-    // Trick the graphics engine into drawing entirely inside system RAM
-    gFb.FrameBuffer = (UINT32*)BackBufferRAM;
-    // Zero out our newly allocated RAM buffer
-    SetMem(gFb.FrameBuffer, FrameBufferSize, 0);
-  }
-  else {
-    // Fallback gracefully to single-buffering if out of memory
-    gHardwareVram = NULL;
-  }
-  /* ????????????????????????????????????????????? */
- /* Initialize File System Layer */
-  VfsInit();
-
-  EFI_GUID KeyExGuid = EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL_GUID;
-  gBS->LocateProtocol(&KeyExGuid, NULL, (VOID**)&gKeyEx);
-  if (gKeyEx) {
-    gKeyEx->Reset(gKeyEx, FALSE);
-    gKeyEx->SetState(gKeyEx, NULL);
-  }
-  gKeySimple = SystemTable->ConIn;
-
-  EFI_GUID  MouseGuid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;
-  UINTN     HandleCount = 0;
-  EFI_HANDLE* Handles = NULL;
-  if (!EFI_ERROR(gBS->LocateHandleBuffer(ByProtocol, &MouseGuid,
-    NULL, &HandleCount, &Handles))) {
-    EFI_SIMPLE_POINTER_PROTOCOL* Best = NULL;
-    UINT64 BestRes = 0;
-    for (UINTN i = 0; i < HandleCount; i++) {
-      EFI_SIMPLE_POINTER_PROTOCOL* Ptr = NULL;
-      if (!EFI_ERROR(gBS->HandleProtocol(Handles[i], &MouseGuid, (VOID**)&Ptr)))
-        if (Ptr->Mode && Ptr->Mode->ResolutionX >= BestRes) {
-          BestRes = Ptr->Mode->ResolutionX;
-          Best = Ptr;
+      if (W->EditorMode) {
+        /* --- KEY HANDLING: EDITOR ROUTINE WITH ARROW NAVIGATION --- */
+        if (Key.ScanCode == SCAN_ESC) {
+          VfsSave(W->EditFileName, W->EditBuf, W->EditLen);
+          W->EditorMode = FALSE;
+          AsciiSPrint(W->Title, sizeof(W->Title), "Terminal %d", (int)(W - gWindows + 1));
+          TermPrintLine(W, " File system context synchronized and updated.", COL_TEXT_GREEN);
         }
-    }
-    gMouse = Best;
-    gBS->FreePool(Handles);
-  }
-  if (gMouse) gMouse->Reset(gMouse, TRUE);
+        /* Arrow Left */
+        else if (Key.ScanCode == SCAN_LEFT) {
+          if (W->EditCursor > 0) {
+            W->EditCursor--;
+          }
+        }
+        /* Arrow Right */
+        else if (Key.ScanCode == SCAN_RIGHT) {
+          if (W->EditCursor < W->EditLen) {
+            W->EditCursor++;
+          }
+        }
+        /* Backspace (Delete character behind cursor) */
+        else if (Key.UnicodeChar == 0x0008) {
+          if (W->EditCursor > 0 && W->EditLen > 0) {
+            // Shift memory left to close the gap
+            for (UINTN i = W->EditCursor - 1; i < W->EditLen - 1; i++) {
+              W->EditBuf[i] = W->EditBuf[i + 1];
+            }
+            W->EditCursor--;
+            W->EditLen--;
+            W->EditBuf[W->EditLen] = 0;
+          }
+        }
+        /* Enter / Newline (Insert newline at cursor) */
+        else if (Key.UnicodeChar == 0x000D) {
+          if (W->EditLen < MAX_FILE_SIZE - 1) {
+            // Shift memory right to make room
+            for (UINTN i = W->EditLen; i > W->EditCursor; i--) {
+              W->EditBuf[i] = W->EditBuf[i - 1];
+            }
+            W->EditBuf[W->EditCursor++] = '\n';
+            W->EditLen++;
+            W->EditBuf[W->EditLen] = 0;
+          }
+        }
+        /* Printable Characters (Insert char at cursor) */
+        else if (Key.UnicodeChar >= 0x20 && Key.UnicodeChar <= 0x7E) {
+          if (W->EditLen < MAX_FILE_SIZE - 1) {
+            // Shift memory right to make room
+            for (UINTN i = W->EditLen; i > W->EditCursor; i--) {
+              W->EditBuf[i] = W->EditBuf[i - 1];
+            }
+            W->EditBuf[W->EditCursor++] = (CHAR8)Key.UnicodeChar;
+            W->EditLen++;
+            W->EditBuf[W->EditLen] = 0;
+          }
+        }
+      }
+      else {
+        /* --- KEY HANDLING: CORE SHELL ROUTINE --- */
+        if (Key.UnicodeChar == 0x0008) {
+          if (W->CmdLen > 0) W->CmdBuf[--W->CmdLen] = 0;
+        }
+        else if (Key.UnicodeChar == 0x000D) {
+          W->CmdBuf[W->CmdLen] = 0;
+          RunCommand(W, W->CmdBuf);
+          SetMem(W->CmdBuf, CMD_BUF_LEN, 0);
+          W->CmdLen = 0;
+        }
+        else if (Key.ScanCode == SCAN_ESC) {
+          SetMem(W->CmdBuf, CMD_BUF_LEN, 0);
+          W->CmdLen = 0;
+        }
+        else if (Key.ScanCode == SCAN_UP && W->ScrollTop > 0) {
+          W->ScrollTop--;
+        }
+        else if (Key.ScanCode == SCAN_DOWN && W->ScrollTop < W->LineCount) {
+          W->ScrollTop++;
+        }
+        else if (Key.UnicodeChar >= 0x20 && Key.UnicodeChar <= 0x7E &&
+          W->CmdLen < CMD_BUF_LEN - 1) {
+          W->CmdBuf[W->CmdLen++] = (CHAR8)Key.UnicodeChar;
+          W->CmdBuf[W->CmdLen] = 0;
+        }
+      }
 
-  gMouseX = (INT32)gFb.Width / 2;
-  gMouseY = (INT32)gFb.Height / 2;
-
-  SpawnTerminal();
-
-  /* Main execution loop */
-/* ?? Main loop ?????????????????????????????????????????????????????? */
-  while (1) {
-    if ((gFrame % BLINK_PERIOD) == 0) {
-      gCursorVisible = !gCursorVisible;
       gDirty = TRUE;
     }
-
-    HandleMouse();
-
-    HandleKeySimple();
-
-    /* ??? UPDATE THIS RENDERING BLOCK ??? */
-    /* ??? UPDATE THIS RENDERING BLOCK ??? */
-    if (gDirty) {
-      // 1. Calculate the total frame size in bytes
-      UINTN FrameBufferSize = gFb.PixelsPerScanLine * gFb.Height * sizeof(UINT32);
-
-      // 2. Clear the back-buffer entirely to eliminate stale frame artifacts
-      SetMem(gFb.FrameBuffer, FrameBufferSize, 0);
-
-      // 3. Render background, windows, and mouse perfectly inside system RAM
-      DrawDesktop();
-
-      // 4. Burst-copy the completed frame out to the physical screen
-      if (gHardwareVram != NULL) {
-        CopyMem(
-          gHardwareVram,
-          gFb.FrameBuffer,
-          FrameBufferSize
-        );
-      }
-      gDirty = FALSE;
-    }
-    /* ???????????????????????????????????? */
-
-    gFrame++;
-    gBS->Stall(14);
   }
-}
+
+  /* ??????????????????????????????????????????????????????????????????????????
+     UEFI ENTRY POINT
+     ?????????????????????????????????????????????????????????????????????????? */
+
+  EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE * SystemTable) {
+    (VOID)ImageHandle;
+    SetMem(&gFb, sizeof(gFb), 0);
+    SetMem(gWindows, sizeof(gWindows), 0);
+    /* Initialize File System Layer */
+    if (EFI_ERROR(GfxInit(gBS, &gFb))) return EFI_ABORTED;
+
+    GPU_INFO GpuInfo;
+    SetMem(&GpuInfo, sizeof(GpuInfo), 0);
+    FindAndMapGpu(gBS, &GpuInfo);
+
+    /* ??? ADD DOUBLE BUFFERING ALLOCATION HERE ??? */
+    // 1. Save the genuine hardware VRAM address
+    gHardwareVram = gFb.FrameBuffer;
+
+    // 2. Calculate total screen buffer size in bytes
+    UINTN FrameBufferSize = gFb.PixelsPerScanLine * gFb.Height * sizeof(UINT32);
+    VOID* BackBufferRAM = NULL;
+
+    // 3. Allocate a fast, cacheable buffer in standard system RAM
+    EFI_STATUS BufferStatus = gBS->AllocatePool(EfiBootServicesData, FrameBufferSize, &BackBufferRAM);
+    if (!EFI_ERROR(BufferStatus)) {
+      // Trick the graphics engine into drawing entirely inside system RAM
+      gFb.FrameBuffer = (UINT32*)BackBufferRAM;
+      // Zero out our newly allocated RAM buffer
+      SetMem(gFb.FrameBuffer, FrameBufferSize, 0);
+    }
+    else {
+      // Fallback gracefully to single-buffering if out of memory
+      gHardwareVram = NULL;
+    }
+    /* ????????????????????????????????????????????? */
+   /* Initialize File System Layer */
+    VfsInit();
+
+    EFI_GUID KeyExGuid = EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL_GUID;
+    gBS->LocateProtocol(&KeyExGuid, NULL, (VOID**)&gKeyEx);
+    if (gKeyEx) {
+      gKeyEx->Reset(gKeyEx, FALSE);
+      gKeyEx->SetState(gKeyEx, NULL);
+    }
+    gKeySimple = SystemTable->ConIn;
+
+    EFI_GUID  MouseGuid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;
+    UINTN     HandleCount = 0;
+    EFI_HANDLE* Handles = NULL;
+    if (!EFI_ERROR(gBS->LocateHandleBuffer(ByProtocol, &MouseGuid,
+      NULL, &HandleCount, &Handles))) {
+      EFI_SIMPLE_POINTER_PROTOCOL* Best = NULL;
+      UINT64 BestRes = 0;
+      for (UINTN i = 0; i < HandleCount; i++) {
+        EFI_SIMPLE_POINTER_PROTOCOL* Ptr = NULL;
+        if (!EFI_ERROR(gBS->HandleProtocol(Handles[i], &MouseGuid, (VOID**)&Ptr)))
+          if (Ptr->Mode && Ptr->Mode->ResolutionX >= BestRes) {
+            BestRes = Ptr->Mode->ResolutionX;
+            Best = Ptr;
+          }
+      }
+      gMouse = Best;
+      gBS->FreePool(Handles);
+    }
+    if (gMouse) gMouse->Reset(gMouse, TRUE);
+
+    gMouseX = (INT32)gFb.Width / 2;
+    gMouseY = (INT32)gFb.Height / 2;
+
+    SpawnTerminal();
+
+    /* Main execution loop */
+  /* ?? Main loop ?????????????????????????????????????????????????????? */
+    while (1) {
+      if ((gFrame % BLINK_PERIOD) == 0) {
+        gCursorVisible = !gCursorVisible;
+        gDirty = TRUE;
+      }
+
+      HandleMouse();
+
+      HandleKeySimple();
+
+      /* ??? UPDATE THIS RENDERING BLOCK ??? */
+      /* ??? UPDATE THIS RENDERING BLOCK ??? */
+      if (gDirty) {
+        // 1. Calculate the total frame size in bytes
+        UINTN FrameBufferSize = gFb.PixelsPerScanLine * gFb.Height * sizeof(UINT32);
+
+        // 2. Clear the back-buffer entirely to eliminate stale frame artifacts
+        SetMem(gFb.FrameBuffer, FrameBufferSize, 0);
+
+        // 3. Render background, windows, and mouse perfectly inside system RAM
+        DrawDesktop();
+
+        // 4. Burst-copy the completed frame out to the physical screen
+        if (gHardwareVram != NULL) {
+          CopyMem(
+            gHardwareVram,
+            gFb.FrameBuffer,
+            FrameBufferSize
+          );
+        }
+        gDirty = FALSE;
+      }
+      /* ???????????????????????????????????? */
+
+      gFrame++;
+      gBS->Stall(14);
+    }
+  }
