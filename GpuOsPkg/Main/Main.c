@@ -1,12 +1,11 @@
 /**
- * Main.c - GpuOS Bare-Metal UEFI Desktop Shell v0.4
+ * Main.c - GpuOS Bare-Metal UEFI Desktop Shell v0.5
  *
- * Fixes in this version:
- * - Text clipped to window boundaries (no overflow past window edges)
- * - Dirty-flag rendering (no flicker)
- * - Keyboard reset on init (fixes silent EX protocol)
- * - TermPrint removed (was unused, caused -Werror)
- * - BaseLib.h included (fixes AsciiStrnLenS / AsciiStrnCpyS / AsciiStrCmp)
+ * Fixes & Features in this version:
+ * - Real, interactive in-memory Virtual File System (VFS)
+ * - Built-in text editor (`edit` command) with live text buffering
+ * - Live standard output stream command (`cat`)
+ * - Persistent VFS file allocations during execution
  */
 
 #include <Uefi.h>
@@ -21,8 +20,7 @@
 #include "Graphics.h"
 #include "Font.h"
 #include "PciGpu.h"
-#include "VFS.h"
-#include "Editor.h"
+
  /* ?? Constants ??????????????????????????????????????????????????????????? */
 #define MAX_WINDOWS     16
 #define TITLE_H         24
@@ -40,6 +38,11 @@
 #define TASKBAR_BTN_X   12
 #define CLOSE_BTN_W     20
 #define CLOSE_BTN_H     18
+
+/* ?? VFS Constants ???????????????????????????????????????????????????????? */
+#define MAX_FILE_NAME   32
+#define MAX_FILE_SIZE   1024
+#define MAX_FILES       16
 
 /* ?? Colors ??????????????????????????????????????????????????????????????? */
 #define COL_DESKTOP_TOP  0xFF0A0A14
@@ -71,6 +74,14 @@ typedef struct {
   UINT32 Color;
 } TERM_LINE;
 
+/* ?? Virtual File System Node ????????????????????????????????????????????? */
+typedef struct {
+  BOOLEAN Used;
+  CHAR8   Name[MAX_FILE_NAME];
+  CHAR8   Content[MAX_FILE_SIZE];
+  UINTN   Size;
+} VFS_FILE;
+
 /* ?? Window ??????????????????????????????????????????????????????????????? */
 typedef struct {
   BOOLEAN Active;
@@ -86,6 +97,12 @@ typedef struct {
   CHAR8     CmdBuf[CMD_BUF_LEN];
   UINTN     CmdLen;
   BOOLEAN   ShiftHeld;
+
+  /* Text Editor Extensions */
+  BOOLEAN   EditorMode;
+  CHAR8     EditFileName[MAX_FILE_NAME];
+  CHAR8     EditBuf[MAX_FILE_SIZE];
+  UINTN     EditLen;
 } TERMINAL_WINDOW;
 
 /* ?? Globals ?????????????????????????????????????????????????????????????? */
@@ -102,12 +119,61 @@ STATIC UINTN                       gFrame = 0;
 STATIC BOOLEAN                     gCursorVisible = TRUE;
 STATIC BOOLEAN                     gDirty = TRUE;
 STATIC GPU_FB                      gFb;
+STATIC VFS_FILE                    gVfs[MAX_FILES];
 
 /* ?? Forward declarations ????????????????????????????????????????????????? */
 STATIC VOID TermNewline(TERMINAL_WINDOW* W);
 STATIC VOID TermPrintLine(TERMINAL_WINDOW* W, CONST CHAR8* Txt, UINT32 Color);
 STATIC VOID RunCommand(TERMINAL_WINDOW* W, CONST CHAR8* Cmd);
 STATIC VOID SpawnTerminal(VOID);
+
+/* ??????????????????????????????????????????????????????????????????????????
+   VIRTUAL FILE SYSTEM IMPLEMENTATION
+   ?????????????????????????????????????????????????????????????????????????? */
+
+STATIC VOID VfsInit(VOID) {
+  SetMem(gVfs, sizeof(gVfs), 0);
+  
+  gVfs[0].Used = TRUE;
+  AsciiStrnCpyS(gVfs[0].Name, MAX_FILE_NAME, "welcome.txt", MAX_FILE_NAME - 1);
+  AsciiStrnCpyS(gVfs[0].Content, MAX_FILE_SIZE, "Welcome to GpuOS Real-Time Shell!\nThis environment features an in-memory VFS.\nType 'help' to see system capabilities.", MAX_FILE_SIZE - 1);
+  gVfs[0].Size = AsciiStrnLenS(gVfs[0].Content, MAX_FILE_SIZE);
+
+  gVfs[1].Used = TRUE;
+  AsciiStrnCpyS(gVfs[1].Name, MAX_FILE_NAME, "notes.txt", MAX_FILE_NAME - 1);
+  AsciiStrnCpyS(gVfs[1].Content, MAX_FILE_SIZE, "- Add mouse resizing vectors\n- Test AMD RDNA graphics hardware\n- Build UEFI file extraction system", MAX_FILE_SIZE - 1);
+  gVfs[1].Size = AsciiStrnLenS(gVfs[1].Content, MAX_FILE_SIZE);
+}
+
+STATIC VFS_FILE* VfsFind(CONST CHAR8* Name) {
+  for (UINTN i = 0; i < MAX_FILES; i++) {
+    if (gVfs[i].Used && AsciiStrCmp(gVfs[i].Name, Name) == 0) {
+      return &gVfs[i];
+    }
+  }
+  return NULL;
+}
+
+STATIC BOOLEAN VfsSave(CONST CHAR8* Name, CONST CHAR8* Content, UINTN Size) {
+  VFS_FILE* File = VfsFind(Name);
+  if (!File) {
+    for (UINTN i = 0; i < MAX_FILES; i++) {
+      if (!gVfs[i].Used) {
+        File = &gVfs[i];
+        File->Used = TRUE;
+        AsciiStrnCpyS(File->Name, MAX_FILE_NAME, Name, MAX_FILE_NAME - 1);
+        break;
+      }
+    }
+  }
+  if (File) {
+    SetMem(File->Content, MAX_FILE_SIZE, 0);
+    AsciiStrnCpyS(File->Content, MAX_FILE_SIZE, Content, MAX_FILE_SIZE - 1);
+    File->Size = (Size < MAX_FILE_SIZE) ? Size : MAX_FILE_SIZE - 1;
+    return TRUE;
+  }
+  return FALSE;
+}
 
 /* ??????????????????????????????????????????????????????????????????????????
    TERMINAL OUTPUT
@@ -118,7 +184,6 @@ STATIC VOID TermNewline(TERMINAL_WINDOW* W) {
     W->LineCount++;
   }
   else {
-    /* Scroll: shift everything up by one */
     for (UINTN i = 0; i < TERM_BUF_LINES - 1; i++)
       W->Lines[i] = W->Lines[i + 1];
   }
@@ -126,7 +191,6 @@ STATIC VOID TermNewline(TERMINAL_WINDOW* W) {
   SetMem(W->Lines[idx].Text, TERM_LINE_LEN, 0);
   W->Lines[idx].Color = COL_TEXT_GREEN;
 
-  /* Auto-scroll to bottom */
   if (W->LineCount > TERM_LINES)
     W->ScrollTop = W->LineCount - TERM_LINES;
   else
@@ -139,12 +203,6 @@ STATIC VOID TermPrintLine(TERMINAL_WINDOW* W, CONST CHAR8* Txt, UINT32 Color) {
   TermNewline(W);
   UINTN cur = (W->LineCount - 1) % TERM_BUF_LINES;
 
-  /*
-   * Compute how many chars fit in the visible terminal width.
-   * Terminal body TX = W->X + 6; right edge = W->X + W->W - 6.
-   * MaxChars = (W->W - 12) / FONT_W  ? but W may not be set yet at
-   * boot, so we also cap at TERM_LINE_LEN - 1.
-   */
   UINTN MaxChars = TERM_LINE_LEN - 1;
   if (W->W > 12) {
     UINTN PixelChars = (UINTN)(W->W - 12) / FONT_W;
@@ -190,6 +248,9 @@ STATIC VOID CmdHelp(TERMINAL_WINDOW* W) {
   TermPrintLine(W, " help     Show this help text", COL_TEXT_WHITE);
   TermPrintLine(W, " ver      Show OS version info", COL_TEXT_WHITE);
   TermPrintLine(W, " sysinfo  Hardware + display", COL_TEXT_WHITE);
+  TermPrintLine(W, " ls       List active VFS files", COL_TEXT_WHITE);
+  TermPrintLine(W, " cat      Print data within a file", COL_TEXT_WHITE);
+  TermPrintLine(W, " edit     Launch interactive text editor", COL_TEXT_WHITE);
   TermPrintLine(W, " gpu      GPU detection info", COL_TEXT_WHITE);
   TermPrintLine(W, " mem      Memory layout report", COL_TEXT_WHITE);
   TermPrintLine(W, " uptime   Frames rendered", COL_TEXT_WHITE);
@@ -197,14 +258,13 @@ STATIC VOID CmdHelp(TERMINAL_WINDOW* W) {
   TermPrintLine(W, " calc     Simple arithmetic", COL_TEXT_WHITE);
   TermPrintLine(W, " color    Set color theme", COL_TEXT_WHITE);
   TermPrintLine(W, " clear    Clear terminal", COL_TEXT_WHITE);
-  TermPrintLine(W, " ls       Virtual filesystem", COL_TEXT_WHITE);
   TermPrintLine(W, " about    About GpuOS", COL_TEXT_WHITE);
   TermPrintLine(W, " reboot   Warm reset", COL_TEXT_WHITE);
   TermPrintLine(W, " shutdown Power off", COL_TEXT_WHITE);
 }
 
 STATIC VOID CmdVer(TERMINAL_WINDOW* W) {
-  TermPrintLine(W, "GpuOS v0.4 - Bare-Metal UEFI Desktop", COL_TEXT_CYAN);
+  TermPrintLine(W, "GpuOS v0.5 - Bare-Metal UEFI Desktop", COL_TEXT_CYAN);
   TermPrintLine(W, "Build: CLANGPDB/X64  Arch: x86_64", COL_TEXT_WHITE);
   TermPrintLine(W, "Kernel: None (runs under UEFI)", COL_TEXT_DIM);
   TermPrintLine(W, "Display: GOP framebuffer (VRAM)", COL_TEXT_DIM);
@@ -260,19 +320,70 @@ STATIC VOID CmdUptime(TERMINAL_WINDOW* W) {
 }
 
 STATIC VOID CmdLs(TERMINAL_WINDOW* W) {
-  TermPrintLine(W, "-- VFS Files --", COL_TEXT_CYAN);
-  const CHAR8* Files[VFS_MAX_FILES];
-  UINT32 Count = VfsListFiles(Files, VFS_MAX_FILES);
-
-  if (Count == 0) {
-    TermPrintLine(W, " (empty)", COL_TEXT_DIM);
-  }
-  else {
-    for (UINT32 i = 0; i < Count; i++) {
-      TermPrintLine(W, Files[i], COL_TEXT_WHITE);
+  TermPrintLine(W, "In-Memory Virtual Filesystem Components:", COL_TEXT_CYAN);
+  TermPrintLine(W, "---------------------------------------", COL_TEXT_DIM);
+  UINTN Count = 0;
+  for (UINTN i = 0; i < MAX_FILES; i++) {
+    if (gVfs[i].Used) {
+      TermPrintFmt(W, COL_TEXT_WHITE, " %a  [%d Bytes]", gVfs[i].Name, (int)gVfs[i].Size);
+      Count++;
     }
   }
+  if (Count == 0) {
+    TermPrintLine(W, " (Empty filesystem)", COL_TEXT_DIM);
+  }
 }
+
+STATIC VOID CmdCat(TERMINAL_WINDOW* W, CONST CHAR8* Arg) {
+  while (*Arg == ' ') Arg++;
+  if (*Arg == 0) {
+    TermPrintLine(W, " Usage: cat <filename>", COL_TEXT_YELLOW);
+    return;
+  }
+  VFS_FILE* File = VfsFind(Arg);
+  if (!File) {
+    TermPrintLine(W, " Target file not found inside VFS.", COL_TEXT_RED);
+    return;
+  }
+  
+  CHAR8 LineBuf[TERM_LINE_LEN];
+  UINTN LineIdx = 0;
+  for (UINTN i = 0; i < File->Size; i++) {
+    if (File->Content[i] == '\n' || LineIdx >= TERM_LINE_LEN - 1) {
+      LineBuf[LineIdx] = 0;
+      TermPrintLine(W, LineBuf, COL_TEXT_WHITE);
+      LineIdx = 0;
+    } else if (File->Content[i] != '\r') {
+      LineBuf[LineIdx++] = File->Content[i];
+    }
+  }
+  if (LineIdx > 0) {
+    LineBuf[LineIdx] = 0;
+    TermPrintLine(W, LineBuf, COL_TEXT_WHITE);
+  }
+}
+
+STATIC VOID CmdEdit(TERMINAL_WINDOW* W, CONST CHAR8* Arg) {
+  while (*Arg == ' ') Arg++;
+  if (*Arg == 0) {
+    TermPrintLine(W, " Usage: edit <filename>", COL_TEXT_YELLOW);
+    return;
+  }
+  W->EditorMode = TRUE;
+  AsciiStrnCpyS(W->EditFileName, MAX_FILE_NAME, Arg, MAX_FILE_NAME - 1);
+  SetMem(W->EditBuf, MAX_FILE_SIZE, 0);
+
+  VFS_FILE* File = VfsFind(Arg);
+  if (File) {
+    AsciiStrnCpyS(W->EditBuf, MAX_FILE_SIZE, File->Content, MAX_FILE_SIZE - 1);
+    W->EditLen = File->Size;
+  } else {
+    W->EditLen = 0;
+  }
+  AsciiSPrint(W->Title, sizeof(W->Title), "Editor: %a", W->EditFileName);
+  gDirty = TRUE;
+}
+
 STATIC VOID CmdAbout(TERMINAL_WINDOW* W) {
   TermPrintLine(W, "", COL_TEXT_GREEN);
   TermPrintLine(W, "  ??????? ??????? ???   ???", COL_TEXT_GREEN);
@@ -282,7 +393,7 @@ STATIC VOID CmdAbout(TERMINAL_WINDOW* W) {
   TermPrintLine(W, " ????????????     ?????????", COL_TEXT_GREEN);
   TermPrintLine(W, "  ??????? ???      ???????", COL_TEXT_GREEN);
   TermPrintLine(W, "", COL_TEXT_GREEN);
-  TermPrintLine(W, " Bare-metal UEFI. No OS. Just GPU.", COL_TEXT_CYAN);
+  TermPrintLine(W, " Bare-metal UEFI Desktop Environment with File System APIs.", COL_TEXT_CYAN);
   TermPrintLine(W, " github.com/your-repo/gpuos", COL_TEXT_DIM);
 }
 
@@ -362,6 +473,8 @@ STATIC VOID RunCommand(TERMINAL_WINDOW* W, CONST CHAR8* RawCmd) {
   else if (CmdIs(RawCmd, "uptime"))   CmdUptime(W);
   else if (CmdIs(RawCmd, "ls"))       CmdLs(W);
   else if (CmdIs(RawCmd, "dir"))      CmdLs(W);
+  else if (CmdIs(RawCmd, "cat"))      CmdCat(W, CmdArg(RawCmd));
+  else if (CmdIs(RawCmd, "edit"))     CmdEdit(W, CmdArg(RawCmd));
   else if (CmdIs(RawCmd, "about"))    CmdAbout(W);
   else if (CmdIs(RawCmd, "clear")) {
     SetMem(W->Lines, sizeof(W->Lines), 0);
@@ -375,17 +488,6 @@ STATIC VOID RunCommand(TERMINAL_WINDOW* W, CONST CHAR8* RawCmd) {
   }
   else if (CmdIs(RawCmd, "calc"))     CmdCalc(W, CmdArg(RawCmd));
   else if (CmdIs(RawCmd, "color"))    CmdColor(W, CmdArg(RawCmd));
-  else if (CmdIs(RawCmd, "edit")) {
-    CONST CHAR8* Filename = CmdArg(RawCmd);
-    EDITOR Ed;
-
-    /* Initialize and run the modal editor blocking loop */
-    EditorInit(&Ed, &gFb, gKeySimple, Filename);
-    EditorRun(&Ed);
-
-    /* When the editor exits, force a full desktop redraw */
-    gDirty = TRUE;
-  }
   else if (CmdIs(RawCmd, "reboot")) {
     TermPrintLine(W, " Rebooting...", COL_TEXT_YELLOW);
     gRT->ResetSystem(EfiResetWarm, EFI_SUCCESS, 0, NULL);
@@ -429,6 +531,7 @@ STATIC VOID SpawnTerminal(VOID) {
   SetMem(W, sizeof(*W), 0);
   W->Active = TRUE;
   W->Focused = TRUE;
+  W->EditorMode = FALSE;
   W->X = 80 + (INT32)(gWindowCount % 6) * 30;
   W->Y = 60 + (INT32)(gWindowCount % 4) * 28;
   W->W = 560;
@@ -436,7 +539,7 @@ STATIC VOID SpawnTerminal(VOID) {
   AsciiSPrint(W->Title, sizeof(W->Title), "Terminal %d", (int)(gWindowCount + 1));
   for (UINTN i = 0; i < gWindowCount; i++) gWindows[i].Focused = FALSE;
   gWindowCount++;
-  TermPrintLine(W, "GpuOS v0.4 - Bare-Metal UEFI Shell", COL_TEXT_GREEN);
+  TermPrintLine(W, "GpuOS v0.5 - Bare-Metal UEFI Shell", COL_TEXT_GREEN);
   TermPrintLine(W, "Type 'help' to list commands.", COL_TEXT_DIM);
   gDirty = TRUE;
 }
@@ -448,7 +551,6 @@ STATIC VOID SpawnTerminal(VOID) {
 STATIC VOID DrawWindow(TERMINAL_WINDOW* W) {
   if (!W->Active) return;
 
-  /* Clamp window position to screen */
   if (W->X < 0)                             W->X = 0;
   if (W->Y < 0)                             W->Y = 0;
   if (W->X + W->W > (INT32)gFb.Width)      W->X = (INT32)gFb.Width - W->W;
@@ -479,68 +581,92 @@ STATIC VOID DrawWindow(TERMINAL_WINDOW* W) {
   FontDrawString(&gFb, CX + 6, CY + 3, "X", COL_TEXT_WHITE,
     CloseHover ? COL_CLOSE_HOVER : COL_CLOSE_BTN);
 
-  /* ?? Terminal body ??????????????????????????????????????????????????? */
+  /* ?? Window core body coordinates ??????????????????????????????????????? */
   INT32  TX = W->X + 6;
   INT32  TY = W->Y + TITLE_H + 2;
-  INT32  TH = W->H - TITLE_H - 4;
-  INT32  TRightX = W->X + W->W - 6;          /* right clip boundary     */
+  INT32  TRightX = W->X + W->W - 6;
   UINT32 InputY = (UINT32)(W->Y + W->H - FONT_H - 6);
-  INT32  TextBot = W->Y + W->H - FONT_H - 8; /* above input bar         */
+  INT32  TextBot = W->Y + W->H - FONT_H - 8;
 
-  /* Compute max chars that fit horizontally */
   UINTN MaxCharsPerLine = (UINTN)(TRightX - TX) / FONT_W;
   if (MaxCharsPerLine == 0) MaxCharsPerLine = 1;
   if (MaxCharsPerLine >= TERM_LINE_LEN) MaxCharsPerLine = TERM_LINE_LEN - 1;
 
-  /* Visible lines */
-  UINTN VisLines = (UINTN)TH / FONT_H;
-  UINTN StartLine = W->ScrollTop;
-  if (StartLine + VisLines > W->LineCount)
-    StartLine = (W->LineCount > VisLines) ? W->LineCount - VisLines : 0;
+  if (W->EditorMode) {
+    /* --- TEXT EDITOR RUNTIME VIEW --- */
+    UINT32 DrawY = (UINT32)TY;
+    CHAR8  LineBuf[TERM_LINE_LEN];
+    UINTN  LineIdx = 0;
 
-  UINT32 DrawY = (UINT32)TY;
-  for (UINTN i = StartLine;
-    i < W->LineCount && (INT32)DrawY + FONT_H <= TextBot;
-    i++) {
-    UINTN li = i % TERM_BUF_LINES;
+    for (UINTN i = 0; i < W->EditLen && (INT32)DrawY + FONT_H <= TextBot; i++) {
+      if (W->EditBuf[i] == '\n' || LineIdx >= MaxCharsPerLine) {
+        LineBuf[LineIdx] = 0;
+        FontDrawString(&gFb, TX, DrawY, LineBuf, COL_TEXT_WHITE, COL_WIN_BG);
+        DrawY += FONT_H;
+        LineIdx = 0;
+        if (W->EditBuf[i] != '\n' && LineIdx >= MaxCharsPerLine) {
+          while (i < W->EditLen && W->EditBuf[i] != '\n') i++;
+        }
+      } else {
+        LineBuf[LineIdx++] = W->EditBuf[i];
+      }
+    }
+    if (LineIdx > 0 && (INT32)DrawY + FONT_H <= TextBot) {
+      LineBuf[LineIdx] = 0;
+      FontDrawString(&gFb, TX, DrawY, LineBuf, COL_TEXT_WHITE, COL_WIN_BG);
+      DrawY += FONT_H;
+    }
 
-    /*
-     * Clip text to MaxCharsPerLine by drawing only a truncated copy.
-     * We do NOT modify the stored line ? just limit how many chars
-     * FontDrawString sees by NUL-terminating a stack copy.
-     */
-    CHAR8 ClipBuf[TERM_LINE_LEN];
-    AsciiStrnCpyS(ClipBuf, sizeof(ClipBuf),
-      W->Lines[li].Text, MaxCharsPerLine);
+    /* Command / Status notification pill */
+    GfxFillRect(&gFb, W->X + 1, InputY - 2, W->W - 2, FONT_H + 6, 0xFF1B1B2A);
+    GfxFillRect(&gFb, W->X + 1, InputY - 2, W->W - 2, 1, 0xFF2F2F4F);
+    FontDrawString(&gFb, TX, InputY, "[ESC] Save Workspace & Close Editor", COL_TEXT_YELLOW, 0xFF1B1B2A);
 
-    FontDrawString(&gFb, TX, DrawY, ClipBuf,
-      W->Lines[li].Color, COL_WIN_BG);
-    DrawY += FONT_H;
-  }
+    /* Text cursor location tracking */
+    if (W->Focused && gCursorVisible) {
+      if ((INT32)(TX + LineIdx * FONT_W) + FONT_W <= TRightX) {
+        UINT32 ActiveCursorY = (DrawY > (UINT32)TY) ? DrawY - FONT_H : (UINT32)TY;
+        GfxFillRect(&gFb, TX + (UINT32)(LineIdx * FONT_W), ActiveCursorY, FONT_W - 1, FONT_H - 2, COL_CURSOR);
+      }
+    }
+  } 
+  else {
+    /* --- SHELL MODE RUNTIME VIEW --- */
+    UINTN VisLines = (UINTN)(TextBot - TY) / FONT_H;
+    UINTN StartLine = W->ScrollTop;
+    if (StartLine + VisLines > W->LineCount)
+      StartLine = (W->LineCount > VisLines) ? W->LineCount - VisLines : 0;
 
-  /* ?? Command input bar ??????????????????????????????????????????????? */
-  GfxFillRect(&gFb, W->X + 1, InputY - 2, W->W - 2, FONT_H + 6, 0xFF0A0A10);
-  GfxFillRect(&gFb, W->X + 1, InputY - 2, W->W - 2, 1, 0xFF1A2838);
+    UINT32 DrawY = (UINT32)TY;
+    for (UINTN i = StartLine; i < W->LineCount && (INT32)DrawY + FONT_H <= TextBot; i++) {
+      UINTN li = i % TERM_BUF_LINES;
 
-  FontDrawString(&gFb, TX, InputY, "$ ", COL_TEXT_GREEN, 0xFF0A0A10);
-  UINT32 PromptW = 2 * FONT_W;
+      CHAR8 ClipBuf[TERM_LINE_LEN];
+      AsciiStrnCpyS(ClipBuf, sizeof(ClipBuf), W->Lines[li].Text, MaxCharsPerLine);
 
-  /* Clip the command buffer to available width */
-  UINTN  CmdMaxChars = (UINTN)(TRightX - TX - (INT32)PromptW) / FONT_W;
-  CHAR8  CmdClip[CMD_BUF_LEN];
-  AsciiStrnCpyS(CmdClip, sizeof(CmdClip), W->CmdBuf,
-    CmdMaxChars < CMD_BUF_LEN - 1 ? CmdMaxChars : CMD_BUF_LEN - 1);
+      FontDrawString(&gFb, TX, DrawY, ClipBuf, W->Lines[li].Color, COL_WIN_BG);
+      DrawY += FONT_H;
+    }
 
-  FontDrawString(&gFb, TX + PromptW, InputY, CmdClip,
-    COL_TEXT_WHITE, 0xFF0A0A10);
+    GfxFillRect(&gFb, W->X + 1, InputY - 2, W->W - 2, FONT_H + 6, 0xFF0A0A10);
+    GfxFillRect(&gFb, W->X + 1, InputY - 2, W->W - 2, 1, 0xFF1A2838);
 
-  /* Blinking cursor (focused window only) */
-  if (W->Focused && gCursorVisible) {
-    /* Cursor tracks visible portion of cmd buf, capped at right edge */
-    UINTN  VisLen = AsciiStrnLenS(CmdClip, sizeof(CmdClip));
-    UINT32 CursorX = (UINT32)(TX + PromptW) + (UINT32)(VisLen * FONT_W);
-    if ((INT32)CursorX + FONT_W <= TRightX)
-      GfxFillRect(&gFb, CursorX, InputY, FONT_W - 1, FONT_H - 2, COL_CURSOR);
+    FontDrawString(&gFb, TX, InputY, "$ ", COL_TEXT_GREEN, 0xFF0A0A10);
+    UINT32 PromptW = 2 * FONT_W;
+
+    UINTN  CmdMaxChars = (UINTN)(TRightX - TX - (INT32)PromptW) / FONT_W;
+    CHAR8  CmdClip[CMD_BUF_LEN];
+    AsciiStrnCpyS(CmdClip, sizeof(CmdClip), W->CmdBuf,
+      CmdMaxChars < CMD_BUF_LEN - 1 ? CmdMaxChars : CMD_BUF_LEN - 1);
+
+    FontDrawString(&gFb, TX + PromptW, InputY, CmdClip, COL_TEXT_WHITE, 0xFF0A0A10);
+
+    if (W->Focused && gCursorVisible) {
+      UINTN  VisLen = AsciiStrnLenS(CmdClip, sizeof(CmdClip));
+      UINT32 CursorX = (UINT32)(TX + PromptW) + (UINT32)(VisLen * FONT_W);
+      if ((INT32)CursorX + FONT_W <= TRightX)
+        GfxFillRect(&gFb, CursorX, InputY, FONT_W - 1, FONT_H - 2, COL_CURSOR);
+    }
   }
 }
 
@@ -643,7 +769,6 @@ STATIC VOID HandleMouse(VOID) {
   if (LeftEdge) {
     UINT32 TBY = gFb.Height - TASKBAR_H;
 
-    /* Taskbar: launch button */
     if (gMouseY >= (INT32)TBY + 5 &&
       gMouseY <= (INT32)TBY + 5 + TASKBAR_BTN_H &&
       gMouseX >= TASKBAR_BTN_X &&
@@ -652,7 +777,6 @@ STATIC VOID HandleMouse(VOID) {
       goto done;
     }
 
-    /* Taskbar: window pills */
     if (gMouseY >= (INT32)(TBY + 6) &&
       gMouseY <= (INT32)(TBY + 6 + TASKBAR_BTN_H)) {
       UINT32 PillX = TASKBAR_BTN_X + TASKBAR_BTN_W + 10;
@@ -668,7 +792,6 @@ STATIC VOID HandleMouse(VOID) {
       }
     }
 
-    /* Windows: top to bottom */
     for (INTN i = (INTN)gWindowCount - 1; i >= 0; i--) {
       TERMINAL_WINDOW* W = &gWindows[i];
       if (!W->Active) continue;
@@ -717,7 +840,6 @@ STATIC VOID HandleKeySimple (VOID) {
   EFI_INPUT_KEY Key;
   EFI_STATUS    Status;
 
-  /* Drain all pending keystrokes this frame */
   while (TRUE) {
     Status = gKeySimple->ReadKeyStroke(gKeySimple, &Key);
     if (Status == EFI_NOT_READY) break;
@@ -728,24 +850,50 @@ STATIC VOID HandleKeySimple (VOID) {
       if (gWindows[k].Active && gWindows[k].Focused) { W = &gWindows[k]; break; }
     if (!W) continue;
 
-    if (Key.UnicodeChar == 0x0008) {
-      if (W->CmdLen > 0) W->CmdBuf[--W->CmdLen] = 0;
-    } else if (Key.UnicodeChar == 0x000D) {
-      W->CmdBuf[W->CmdLen] = 0;
-      RunCommand(W, W->CmdBuf);
-      SetMem(W->CmdBuf, CMD_BUF_LEN, 0);
-      W->CmdLen = 0;
-    } else if (Key.ScanCode == SCAN_ESC) {
-      SetMem(W->CmdBuf, CMD_BUF_LEN, 0);
-      W->CmdLen = 0;
-    } else if (Key.ScanCode == SCAN_UP && W->ScrollTop > 0) {
-      W->ScrollTop--;
-    } else if (Key.ScanCode == SCAN_DOWN && W->ScrollTop < W->LineCount) {
-      W->ScrollTop++;
-    } else if (Key.UnicodeChar >= 0x20 && Key.UnicodeChar <= 0x7E &&
-               W->CmdLen < CMD_BUF_LEN - 1) {
-      W->CmdBuf[W->CmdLen++] = (CHAR8)Key.UnicodeChar;
-      W->CmdBuf[W->CmdLen]   = 0;
+    if (W->EditorMode) {
+      /* --- KEY HANDLING: EDITOR ROUTINE --- */
+      if (Key.ScanCode == SCAN_ESC) {
+        VfsSave(W->EditFileName, W->EditBuf, W->EditLen);
+        W->EditorMode = FALSE;
+        AsciiSPrint(W->Title, sizeof(W->Title), "Terminal %d", (int)(W - gWindows + 1));
+        TermPrintLine(W, " File system context synchronized and updated.", COL_TEXT_GREEN);
+      } else if (Key.UnicodeChar == 0x0008) {
+        if (W->EditLen > 0) {
+          W->EditBuf[--W->EditLen] = 0;
+        }
+      } else if (Key.UnicodeChar == 0x000D) {
+        if (W->EditLen < MAX_FILE_SIZE - 1) {
+          W->EditBuf[W->EditLen++] = '\n';
+          W->EditBuf[W->EditLen] = 0;
+        }
+      } else if (Key.UnicodeChar >= 0x20 && Key.UnicodeChar <= 0x7E) {
+        if (W->EditLen < MAX_FILE_SIZE - 1) {
+          W->EditBuf[W->EditLen++] = (CHAR8)Key.UnicodeChar;
+          W->EditBuf[W->EditLen] = 0;
+        }
+      }
+    } 
+    else {
+      /* --- KEY HANDLING: CORE SHELL ROUTINE --- */
+      if (Key.UnicodeChar == 0x0008) {
+        if (W->CmdLen > 0) W->CmdBuf[--W->CmdLen] = 0;
+      } else if (Key.UnicodeChar == 0x000D) {
+        W->CmdBuf[W->CmdLen] = 0;
+        RunCommand(W, W->CmdBuf);
+        SetMem(W->CmdBuf, CMD_BUF_LEN, 0);
+        W->CmdLen = 0;
+      } else if (Key.ScanCode == SCAN_ESC) {
+        SetMem(W->CmdBuf, CMD_BUF_LEN, 0);
+        W->CmdLen = 0;
+      } else if (Key.ScanCode == SCAN_UP && W->ScrollTop > 0) {
+        W->ScrollTop--;
+      } else if (Key.ScanCode == SCAN_DOWN && W->ScrollTop < W->LineCount) {
+        W->ScrollTop++;
+      } else if (Key.UnicodeChar >= 0x20 && Key.UnicodeChar <= 0x7E &&
+                 W->CmdLen < CMD_BUF_LEN - 1) {
+        W->CmdBuf[W->CmdLen++] = (CHAR8)Key.UnicodeChar;
+        W->CmdBuf[W->CmdLen]   = 0;
+      }
     }
 
     gDirty = TRUE;
@@ -762,24 +910,22 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
   SetMem(gWindows, sizeof(gWindows), 0);
 
   if (EFI_ERROR(GfxInit(gBS, &gFb))) return EFI_ABORTED;
-  /* Initialize Virtual Filesystem */
-  if (EFI_ERROR(VfsInit(gBS))) {
-    /* Handle allocation failure if necessary */
-  }
+
   GPU_INFO GpuInfo;
   SetMem(&GpuInfo, sizeof(GpuInfo), 0);
   FindAndMapGpu(gBS, &GpuInfo);
 
-  /* Keyboard: prefer EX, reset it so events flow immediately */
+  /* Initialize File System Layer */
+  VfsInit();
+
   EFI_GUID KeyExGuid = EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL_GUID;
   gBS->LocateProtocol(&KeyExGuid, NULL, (VOID**)&gKeyEx);
   if (gKeyEx) {
-    gKeyEx->Reset(gKeyEx, FALSE);   /* flush + activate */
+    gKeyEx->Reset(gKeyEx, FALSE);
     gKeyEx->SetState(gKeyEx, NULL);
   }
-  gKeySimple = SystemTable->ConIn;  /* always available as fallback */
+  gKeySimple = SystemTable->ConIn;
 
-  /* Mouse: pick highest-resolution pointer */
   EFI_GUID  MouseGuid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;
   UINTN     HandleCount = 0;
   EFI_HANDLE* Handles = NULL;
@@ -805,7 +951,7 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
   SpawnTerminal();
 
-  /* ?? Main loop ?????????????????????????????????????????????????????? */
+  /* Main execution loop */
   while (1) {
     if ((gFrame % BLINK_PERIOD) == 0) {
       gCursorVisible = !gCursorVisible;
@@ -813,12 +959,10 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     }
 
     HandleMouse();
-
     HandleKeySimple();
 
     if (gDirty) {
       DrawDesktop();
-      GfxFlip(&gFb); /* Push the backbuffer to VRAM */
       gDirty = FALSE;
     }
 
