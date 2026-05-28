@@ -21,5 +21,5 @@ Copy-Item "C:\uefidev\BaseTools-win32\edk2-BaseTools-win32-master\*" "C:\uefidev
 
 how to boot:
 
-just copy BOOTX64.EFI to EFI/BOOT/ intoany drive
+just copy BOOTX64.EFI to EFI/BOOT/ into any drive
 
