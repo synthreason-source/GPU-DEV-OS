@@ -110,6 +110,7 @@ STATIC TERMINAL_WINDOW             gWindows[MAX_WINDOWS];
 STATIC UINTN                       gWindowCount = 0;
 STATIC INT32                       gMouseX = 400;
 STATIC INT32                       gMouseY = 300;
+STATIC UINT32* gHardwareVram = NULL;
 STATIC BOOLEAN                     gMouseLeftHeld = FALSE;
 STATIC BOOLEAN                     gMouseLeftLast = FALSE;
 STATIC EFI_SIMPLE_POINTER_PROTOCOL* gMouse = NULL;
@@ -908,12 +909,32 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
   (VOID)ImageHandle;
   SetMem(&gFb, sizeof(gFb), 0);
   SetMem(gWindows, sizeof(gWindows), 0);
-
+  /* Initialize File System Layer */
   if (EFI_ERROR(GfxInit(gBS, &gFb))) return EFI_ABORTED;
 
   GPU_INFO GpuInfo;
   SetMem(&GpuInfo, sizeof(GpuInfo), 0);
   FindAndMapGpu(gBS, &GpuInfo);
+
+  /* ─── ADD DOUBLE BUFFERING ALLOCATION HERE ─── */
+  // 1. Save the actual hardware screen pointer
+  gHardwareVram = gFb.FrameBuffer;
+
+  // 2. Calculate total frame size including stride (PixelsPerScanLine)
+  UINTN FrameBufferSize = gFb.PixelsPerScanLine * gFb.Height * sizeof(UINT32);
+  VOID* BackBufferRAM = NULL;
+
+  // 3. Allocate a fast scratchpad in standard system memory
+  EFI_STATUS BufferStatus = gBS->AllocatePool(EfiRuntimeServicesData, FrameBufferSize, &BackBufferRAM);
+  if (!EFI_ERROR(BufferStatus)) {
+    // Trick the entire OS into drawing into standard RAM instead of VRAM
+    gFb.FrameBuffer = (UINT32*)BackBufferRAM;
+  }
+  else {
+    // Fallback gracefully to single buffering if system is out of memory
+    gHardwareVram = NULL;
+  }
+  /* ───────────────────────────────────────────── */
 
   /* Initialize File System Layer */
   VfsInit();
@@ -961,14 +982,24 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     HandleMouse();
     HandleKeySimple();
 
+    /* ─── UPDATE THIS RENDERING BLOCK ─── */
     if (gDirty) {
+      // 1. Compose everything safely inside system RAM (No screen artifacts visible)
       DrawDesktop();
+
+      // 2. If double buffering is active, instantly snap the RAM picture to the screen
+      if (gHardwareVram != NULL) {
+        CopyMem(
+          gHardwareVram,
+          gFb.FrameBuffer,
+          gFb.PixelsPerScanLine * gFb.Height * sizeof(UINT32)
+        );
+      }
       gDirty = FALSE;
     }
+    /* ──────────────────────────────────── */
 
     gFrame++;
     gBS->Stall(14);
   }
-
-  return EFI_SUCCESS;
 }
