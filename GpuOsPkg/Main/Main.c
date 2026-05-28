@@ -103,6 +103,7 @@ typedef struct {
   CHAR8     EditFileName[MAX_FILE_NAME];
   CHAR8     EditBuf[MAX_FILE_SIZE];
   UINTN     EditLen;
+  UINTN     EditCursor;   /* ADD THIS: Tracks character position of the cursor */
 } TERMINAL_WINDOW;
 
 /* ?? Globals ?????????????????????????????????????????????????????????????? */
@@ -382,6 +383,7 @@ STATIC VOID CmdEdit(TERMINAL_WINDOW* W, CONST CHAR8* Arg) {
     W->EditLen = 0;
   }
   AsciiSPrint(W->Title, sizeof(W->Title), "Editor: %a", W->EditFileName);
+  W->EditCursor = W->EditLen; /* ADD THIS: Place cursor at the end of text */
   gDirty = TRUE;
 }
 
@@ -595,27 +597,53 @@ STATIC VOID DrawWindow(TERMINAL_WINDOW* W) {
 
   if (W->EditorMode) {
     /* --- TEXT EDITOR RUNTIME VIEW --- */
+    /* --- TEXT EDITOR RUNTIME VIEW --- */
     UINT32 DrawY = (UINT32)TY;
     CHAR8  LineBuf[TERM_LINE_LEN];
     UINTN  LineIdx = 0;
 
-    for (UINTN i = 0; i < W->EditLen && (INT32)DrawY + FONT_H <= TextBot; i++) {
+    UINT32 CursorDrawX = TX;
+    UINT32 CursorDrawY = TY;
+    BOOLEAN CursorFound = FALSE;
+
+    for (UINTN i = 0; i <= W->EditLen && (INT32)DrawY + FONT_H <= TextBot; i++) {
+      // Check if this iteration matches our cursor's logical position
+      if (i == W->EditCursor) {
+        CursorDrawX = TX + (LineIdx * FONT_W);
+        CursorDrawY = DrawY;
+        CursorFound = TRUE;
+      }
+
+      // Safeguard against out-of-bounds evaluation loop condition closure
+      if (i == W->EditLen) break;
+
       if (W->EditBuf[i] == '\n' || LineIdx >= MaxCharsPerLine) {
         LineBuf[LineIdx] = 0;
         FontDrawString(&gFb, TX, DrawY, LineBuf, COL_TEXT_WHITE, COL_WIN_BG);
         DrawY += FONT_H;
         LineIdx = 0;
+
+        // Handle wrapping skipping constraints
         if (W->EditBuf[i] != '\n' && LineIdx >= MaxCharsPerLine) {
-          while (i < W->EditLen && W->EditBuf[i] != '\n') i++;
+          while (i < W->EditLen && W->EditBuf[i] != '\n') {
+            i++;
+            if (i == W->EditCursor) { // Edge-case: Cursor caught in wrapped buffer drop
+              CursorDrawX = TX;
+              CursorDrawY = DrawY;
+              CursorFound = TRUE;
+            }
+          }
         }
-      } else {
+      }
+      else {
         LineBuf[LineIdx++] = W->EditBuf[i];
       }
     }
+
+    // Flush any leftover text in the processing line buffer
     if (LineIdx > 0 && (INT32)DrawY + FONT_H <= TextBot) {
       LineBuf[LineIdx] = 0;
       FontDrawString(&gFb, TX, DrawY, LineBuf, COL_TEXT_WHITE, COL_WIN_BG);
-      DrawY += FONT_H;
     }
 
     /* Command / Status notification pill */
@@ -623,14 +651,12 @@ STATIC VOID DrawWindow(TERMINAL_WINDOW* W) {
     GfxFillRect(&gFb, W->X + 1, InputY - 2, W->W - 2, 1, 0xFF2F2F4F);
     FontDrawString(&gFb, TX, InputY, "[ESC] Save Workspace & Close Editor", COL_TEXT_YELLOW, 0xFF1B1B2A);
 
-    /* Text cursor location tracking */
-    if (W->Focused && gCursorVisible) {
-      if ((INT32)(TX + LineIdx * FONT_W) + FONT_W <= TRightX) {
-        UINT32 ActiveCursorY = (DrawY > (UINT32)TY) ? DrawY - FONT_H : (UINT32)TY;
-        GfxFillRect(&gFb, TX + (UINT32)(LineIdx * FONT_W), ActiveCursorY, FONT_W - 1, FONT_H - 2, COL_CURSOR);
+    /* Render the tracking text cursor position dynamically calculated above */
+    if (W->Focused && gCursorVisible && CursorFound) {
+      if ((INT32)CursorDrawX + FONT_W <= TRightX) {
+        GfxFillRect(&gFb, CursorDrawX, CursorDrawY, FONT_W - 1, FONT_H - 2, COL_CURSOR);
       }
     }
-  } 
   else {
     /* --- SHELL MODE RUNTIME VIEW --- */
     UINTN VisLines = (UINTN)(TextBot - TY) / FONT_H;
@@ -852,28 +878,62 @@ STATIC VOID HandleKeySimple (VOID) {
     if (!W) continue;
 
     if (W->EditorMode) {
-      /* --- KEY HANDLING: EDITOR ROUTINE --- */
+      /* --- KEY HANDLING: EDITOR ROUTINE WITH ARROW NAVIGATION --- */
       if (Key.ScanCode == SCAN_ESC) {
         VfsSave(W->EditFileName, W->EditBuf, W->EditLen);
         W->EditorMode = FALSE;
         AsciiSPrint(W->Title, sizeof(W->Title), "Terminal %d", (int)(W - gWindows + 1));
         TermPrintLine(W, " File system context synchronized and updated.", COL_TEXT_GREEN);
-      } else if (Key.UnicodeChar == 0x0008) {
-        if (W->EditLen > 0) {
-          W->EditBuf[--W->EditLen] = 0;
+      }
+      /* Arrow Left */
+      else if (Key.ScanCode == SCAN_LEFT) {
+        if (W->EditCursor > 0) {
+          W->EditCursor--;
         }
-      } else if (Key.UnicodeChar == 0x000D) {
-        if (W->EditLen < MAX_FILE_SIZE - 1) {
-          W->EditBuf[W->EditLen++] = '\n';
-          W->EditBuf[W->EditLen] = 0;
+      }
+      /* Arrow Right */
+      else if (Key.ScanCode == SCAN_RIGHT) {
+        if (W->EditCursor < W->EditLen) {
+          W->EditCursor++;
         }
-      } else if (Key.UnicodeChar >= 0x20 && Key.UnicodeChar <= 0x7E) {
-        if (W->EditLen < MAX_FILE_SIZE - 1) {
-          W->EditBuf[W->EditLen++] = (CHAR8)Key.UnicodeChar;
+      }
+      /* Backspace (Delete character behind cursor) */
+      else if (Key.UnicodeChar == 0x0008) {
+        if (W->EditCursor > 0 && W->EditLen > 0) {
+          // Shift memory left to close the gap
+          for (UINTN i = W->EditCursor - 1; i < W->EditLen - 1; i++) {
+            W->EditBuf[i] = W->EditBuf[i + 1];
+          }
+          W->EditCursor--;
+          W->EditLen--;
           W->EditBuf[W->EditLen] = 0;
         }
       }
-    } 
+      /* Enter / Newline (Insert newline at cursor) */
+      else if (Key.UnicodeChar == 0x000D) {
+        if (W->EditLen < MAX_FILE_SIZE - 1) {
+          // Shift memory right to make room
+          for (UINTN i = W->EditLen; i > W->EditCursor; i--) {
+            W->EditBuf[i] = W->EditBuf[i - 1];
+          }
+          W->EditBuf[W->EditCursor++] = '\n';
+          W->EditLen++;
+          W->EditBuf[W->EditLen] = 0;
+        }
+      }
+      /* Printable Characters (Insert char at cursor) */
+      else if (Key.UnicodeChar >= 0x20 && Key.UnicodeChar <= 0x7E) {
+        if (W->EditLen < MAX_FILE_SIZE - 1) {
+          // Shift memory right to make room
+          for (UINTN i = W->EditLen; i > W->EditCursor; i--) {
+            W->EditBuf[i] = W->EditBuf[i - 1];
+          }
+          W->EditBuf[W->EditCursor++] = (CHAR8)Key.UnicodeChar;
+          W->EditLen++;
+          W->EditBuf[W->EditLen] = 0;
+        }
+      }
+    }
     else {
       /* --- KEY HANDLING: CORE SHELL ROUTINE --- */
       if (Key.UnicodeChar == 0x0008) {
