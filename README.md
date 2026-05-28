@@ -25,5 +25,5 @@ run edksetup.bat
 
 how to boot:
 
-just copy BOOTX64.EFI to EFI/BOOT/ into any drive
+just copy GpuOs.efi to EFI/BOOT/BOOTX64.EFI into any drive
 
