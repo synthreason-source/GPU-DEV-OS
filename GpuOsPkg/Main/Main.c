@@ -916,7 +916,7 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
   SetMem(&GpuInfo, sizeof(GpuInfo), 0);
   FindAndMapGpu(gBS, &GpuInfo);
 
-  /* ─── ADD DOUBLE BUFFERING ALLOCATION HERE ─── */
+  /* ??? ADD DOUBLE BUFFERING ALLOCATION HERE ??? */
   // 1. Save the genuine hardware VRAM address
   gHardwareVram = gFb.FrameBuffer;
 
@@ -936,7 +936,7 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     // Fallback gracefully to single-buffering if out of memory
     gHardwareVram = NULL;
   }
-  /* ───────────────────────────────────────────── */
+  /* ????????????????????????????????????????????? */
  /* Initialize File System Layer */
   VfsInit();
 
@@ -985,22 +985,29 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
     HandleKeySimple();
 
-    /* ─── UPDATE THIS RENDERING BLOCK ─── */
+    /* ??? UPDATE THIS RENDERING BLOCK ??? */
+    /* ??? UPDATE THIS RENDERING BLOCK ??? */
     if (gDirty) {
-      // 1. Render background, windows, and mouse perfectly inside system RAM
+      // 1. Calculate the total frame size in bytes
+      UINTN FrameBufferSize = gFb.PixelsPerScanLine * gFb.Height * sizeof(UINT32);
+
+      // 2. Clear the back-buffer entirely to eliminate stale frame artifacts
+      SetMem(gFb.FrameBuffer, FrameBufferSize, 0);
+
+      // 3. Render background, windows, and mouse perfectly inside system RAM
       DrawDesktop();
 
-      // 2. Burst-copy the completed frame out to the physical screen
+      // 4. Burst-copy the completed frame out to the physical screen
       if (gHardwareVram != NULL) {
         CopyMem(
           gHardwareVram,
           gFb.FrameBuffer,
-          gFb.PixelsPerScanLine * gFb.Height * sizeof(UINT32)
+          FrameBufferSize
         );
       }
       gDirty = FALSE;
     }
-    /* ──────────────────────────────────── */
+    /* ???????????????????????????????????? */
 
     gFrame++;
     gBS->Stall(14);
