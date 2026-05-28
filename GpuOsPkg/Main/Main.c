@@ -115,13 +115,13 @@ STATIC BOOLEAN                     gMouseLeftHeld = FALSE;
 STATIC BOOLEAN                     gMouseLeftLast = FALSE;
 STATIC EFI_SIMPLE_POINTER_PROTOCOL* gMouse = NULL;
 STATIC EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL* gKeyEx = NULL;
+
 STATIC EFI_SIMPLE_TEXT_INPUT_PROTOCOL* gKeySimple = NULL;
 STATIC UINTN                       gFrame = 0;
 STATIC BOOLEAN                     gCursorVisible = TRUE;
 STATIC BOOLEAN                     gDirty = TRUE;
 STATIC GPU_FB                      gFb;
 STATIC VFS_FILE                    gVfs[MAX_FILES];
-
 /* ?? Forward declarations ????????????????????????????????????????????????? */
 STATIC VOID TermNewline(TERMINAL_WINDOW* W);
 STATIC VOID TermPrintLine(TERMINAL_WINDOW* W, CONST CHAR8* Txt, UINT32 Color);
@@ -917,26 +917,27 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
   FindAndMapGpu(gBS, &GpuInfo);
 
   /* ─── ADD DOUBLE BUFFERING ALLOCATION HERE ─── */
-  // 1. Save the actual hardware screen pointer
+  // 1. Save the genuine hardware VRAM address
   gHardwareVram = gFb.FrameBuffer;
 
-  // 2. Calculate total frame size including stride (PixelsPerScanLine)
+  // 2. Calculate total screen buffer size in bytes
   UINTN FrameBufferSize = gFb.PixelsPerScanLine * gFb.Height * sizeof(UINT32);
   VOID* BackBufferRAM = NULL;
 
-  // 3. Allocate a fast scratchpad in standard system memory
-  EFI_STATUS BufferStatus = gBS->AllocatePool(EfiRuntimeServicesData, FrameBufferSize, &BackBufferRAM);
+  // 3. Allocate a fast, cacheable buffer in standard system RAM
+  EFI_STATUS BufferStatus = gBS->AllocatePool(EfiBootServicesData, FrameBufferSize, &BackBufferRAM);
   if (!EFI_ERROR(BufferStatus)) {
-    // Trick the entire OS into drawing into standard RAM instead of VRAM
+    // Trick the graphics engine into drawing entirely inside system RAM
     gFb.FrameBuffer = (UINT32*)BackBufferRAM;
+    // Zero out our newly allocated RAM buffer
+    SetMem(gFb.FrameBuffer, FrameBufferSize, 0);
   }
   else {
-    // Fallback gracefully to single buffering if system is out of memory
+    // Fallback gracefully to single-buffering if out of memory
     gHardwareVram = NULL;
   }
   /* ───────────────────────────────────────────── */
-
-  /* Initialize File System Layer */
+ /* Initialize File System Layer */
   VfsInit();
 
   EFI_GUID KeyExGuid = EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL_GUID;
@@ -973,6 +974,7 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
   SpawnTerminal();
 
   /* Main execution loop */
+/* ?? Main loop ?????????????????????????????????????????????????????? */
   while (1) {
     if ((gFrame % BLINK_PERIOD) == 0) {
       gCursorVisible = !gCursorVisible;
@@ -980,14 +982,15 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     }
 
     HandleMouse();
+
     HandleKeySimple();
 
     /* ─── UPDATE THIS RENDERING BLOCK ─── */
     if (gDirty) {
-      // 1. Compose everything safely inside system RAM (No screen artifacts visible)
+      // 1. Render background, windows, and mouse perfectly inside system RAM
       DrawDesktop();
 
-      // 2. If double buffering is active, instantly snap the RAM picture to the screen
+      // 2. Burst-copy the completed frame out to the physical screen
       if (gHardwareVram != NULL) {
         CopyMem(
           gHardwareVram,
