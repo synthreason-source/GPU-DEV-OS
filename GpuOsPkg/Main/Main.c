@@ -89,6 +89,9 @@ typedef struct {
   UINTN     CmdLen;
   BOOLEAN   ShiftHeld;
 
+  /* Editor (active when EditorMode is TRUE) */
+  BOOLEAN   EditorMode;
+  EDITOR    Ed;
 
 } TERMINAL_WINDOW;
 
@@ -381,12 +384,9 @@ STATIC VOID CmdEdit(TERMINAL_WINDOW* W, CONST CHAR8* Arg) {
     TermPrintLine(W, " Usage: edit <filename>", COL_TEXT_YELLOW);
     return;
   }
-  EDITOR Ed;
-  EditorInit(&Ed, &gFb, gKeySimple, Arg);
-  EditorRun(&Ed);
-  /* Restore title after editor exits */
-  AsciiSPrint(W->Title, sizeof(W->Title), "Terminal %d", (int)(W - gWindows + 1));
-  TermPrintLine(W, " Editor closed.", COL_TEXT_DIM);
+  EditorInit(&W->Ed, &gFb, gKeySimple, Arg);
+  W->EditorMode = TRUE;
+  AsciiSPrint(W->Title, sizeof(W->Title), "Editor: %a", Arg);
   gDirty = TRUE;
 }
 
@@ -527,7 +527,12 @@ STATIC VOID DrawWindow(TERMINAL_WINDOW* W) {
   if (MaxCharsPerLine == 0) MaxCharsPerLine = 1;
   if (MaxCharsPerLine >= TERM_LINE_LEN) MaxCharsPerLine = TERM_LINE_LEN - 1;
 
-  {
+  if (W->EditorMode) {
+    /* Editor owns the full window interior — update its framebuffer pointer
+       and dimensions each frame so it adapts if the window moves/resizes. */
+    W->Ed.Fb = &gFb;
+    EditorDraw(&W->Ed);
+  } else {
     /* --- SHELL MODE RUNTIME VIEW --- */
     UINTN VisLines = (UINTN)(TextBot - TY) / FONT_H;
     UINTN StartLine = W->ScrollTop;
@@ -564,7 +569,7 @@ STATIC VOID DrawWindow(TERMINAL_WINDOW* W) {
       if ((INT32)CursorX + FONT_W <= TRightX)
         GfxFillRect(&gFb, CursorX, InputY, FONT_W - 1, FONT_H - 2, COL_CURSOR);
     }
-  }
+  } /* end else (shell mode) */
 }
 
 STATIC VOID DrawTaskbar(VOID) {
@@ -747,7 +752,14 @@ STATIC VOID HandleKeySimple (VOID) {
       if (gWindows[k].Active && gWindows[k].Focused) { W = &gWindows[k]; break; }
     if (!W) continue;
 
-    {
+    if (W->EditorMode) {
+      /* Route key to editor; close editor if it signals quit */
+      if (!EditorHandleKey(&W->Ed, &Key)) {
+        W->EditorMode = FALSE;
+        AsciiSPrint(W->Title, sizeof(W->Title), "Terminal %d", (int)(W - gWindows + 1));
+        TermPrintLine(W, " Editor closed.", COL_TEXT_DIM);
+      }
+    } else {
       /* --- KEY HANDLING: CORE SHELL ROUTINE --- */
       if (Key.UnicodeChar == 0x0008) {
         if (W->CmdLen > 0) W->CmdBuf[--W->CmdLen] = 0;
