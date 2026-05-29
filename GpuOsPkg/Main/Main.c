@@ -21,6 +21,7 @@
 #include "Font.h"
 #include "PciGpu.h"
 #include "VFS.h"
+#include "Editor.h"
 
  /* ?? Constants ??????????????????????????????????????????????????????????? */
 #define MAX_WINDOWS     16
@@ -188,6 +189,8 @@ STATIC VOID CmdHelp(TERMINAL_WINDOW* W) {
   TermPrintLine(W, " ver      Show OS version info", COL_TEXT_WHITE);
   TermPrintLine(W, " sysinfo  Hardware + display", COL_TEXT_WHITE);
   TermPrintLine(W, " ls       List active VFS files", COL_TEXT_WHITE);
+  TermPrintLine(W, " cat      Print file contents", COL_TEXT_WHITE);
+  TermPrintLine(W, " edit     Open file in text editor", COL_TEXT_WHITE);
   TermPrintLine(W, " cat      Print data within a file", COL_TEXT_WHITE);
 
   TermPrintLine(W, " gpu      GPU detection info", COL_TEXT_WHITE);
@@ -372,6 +375,21 @@ STATIC VOID CmdColor(TERMINAL_WINDOW* W, CONST CHAR8* Arg) {
     TermPrintLine(W, " Usage: color [1-4 | green amber cyan white]", COL_TEXT_DIM);
 }
 
+STATIC VOID CmdEdit(TERMINAL_WINDOW* W, CONST CHAR8* Arg) {
+  while (*Arg == ' ') Arg++;
+  if (*Arg == 0) {
+    TermPrintLine(W, " Usage: edit <filename>", COL_TEXT_YELLOW);
+    return;
+  }
+  EDITOR Ed;
+  EditorInit(&Ed, &gFb, gKeySimple, Arg);
+  EditorRun(&Ed);
+  /* Restore title after editor exits */
+  AsciiSPrint(W->Title, sizeof(W->Title), "Terminal %d", (int)(W - gWindows + 1));
+  TermPrintLine(W, " Editor closed.", COL_TEXT_DIM);
+  gDirty = TRUE;
+}
+
 STATIC VOID RunCommand(TERMINAL_WINDOW* W, CONST CHAR8* RawCmd) {
   CHAR8 PromptLine[CMD_BUF_LEN + 8];
   AsciiSPrint(PromptLine, sizeof(PromptLine), "> %a", RawCmd);
@@ -391,6 +409,7 @@ STATIC VOID RunCommand(TERMINAL_WINDOW* W, CONST CHAR8* RawCmd) {
   else if (CmdIs(RawCmd, "ls"))       CmdLs(W);
   else if (CmdIs(RawCmd, "dir"))      CmdLs(W);
   else if (CmdIs(RawCmd, "cat"))      CmdCat(W, CmdArg(RawCmd));
+  else if (CmdIs(RawCmd, "edit"))     CmdEdit(W, CmdArg(RawCmd));
 
   else if (CmdIs(RawCmd, "about"))    CmdAbout(W);
   else if (CmdIs(RawCmd, "clear")) {
