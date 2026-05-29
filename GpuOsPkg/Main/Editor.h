@@ -54,7 +54,7 @@ typedef struct {
     CHAR8        Filename[EDITOR_FILENAME_MAX];
     BOOLEAN      Modified;
 
-    /* Framebuffer & input */
+    /* Framebuffer & input (set by EditorRun) */
     GPU_FB      *Fb;
     EFI_SIMPLE_TEXT_INPUT_PROTOCOL *TextIn;
 
@@ -84,16 +84,10 @@ VOID EditorInit(EDITOR *Ed, GPU_FB *Fb,
                 const CHAR8 *Filename);
 
 /**
- * EditorDraw — Render the editor into its framebuffer. Call once per frame.
+ * EditorRun — Enter the editor event loop.
+ * Returns when the user presses Ctrl+Q.
  */
-VOID EditorDraw(EDITOR *Ed);
-
-/**
- * EditorHandleKey — Process one key event. Call from the main loop whenever
- * a keystroke is available. Returns TRUE to keep the editor open, FALSE when
- * the user quits (Ctrl+Q or ESC on an unmodified buffer).
- */
-BOOLEAN EditorHandleKey(EDITOR *Ed, EFI_INPUT_KEY *Key);
+VOID EditorRun(EDITOR *Ed);
 
 /**
  * EditorLoadFromVfs — Load a VFS file into the editor buffer.

@@ -22,7 +22,6 @@
 #include <Library/BaseLib.h>
 
 /* ?? SCAN CODES from EFI_SIMPLE_TEXT_INPUT ??????????????????????? */
-/* Navigation */
 #define SCAN_PGUP   0x09
 #define SCAN_PGDN   0x0A
 /* ?? Control characters ??????????????????????????????????????????? */
@@ -455,71 +454,83 @@ VOID EditorInit(EDITOR *Ed, GPU_FB *Fb,
     EditorCalcLayout(Ed);
 }
 
-/* ?? Non-blocking key handler ? called once per main-loop tick ????? */
-/* Returns TRUE to keep editor open, FALSE when the user quits.      */
+/* ?? Main event loop ??????????????????????????????????????????????? */
 
-BOOLEAN EditorHandleKey(EDITOR *Ed, EFI_INPUT_KEY *Key) {
-    CHAR16 Uni  = Key->UnicodeChar;
-    UINT16 Scan = Key->ScanCode;
+VOID EditorRun(EDITOR *Ed) {
+    EditorDraw(Ed);
 
-    /* ?? Scan codes ?????????????????????????????????????? */
-    if (Scan == SCAN_UP) {
-        if (Ed->CurRow > 0) Ed->CurRow--;
-        EditorClampCursor(Ed);
-    } else if (Scan == SCAN_DOWN) {
-        if (Ed->CurRow + 1 < Ed->NumLines) Ed->CurRow++;
-        EditorClampCursor(Ed);
-    } else if (Scan == SCAN_LEFT) {
-        if (Ed->CurCol > 0) {
-            Ed->CurCol--;
-        } else if (Ed->CurRow > 0) {
-            Ed->CurRow--;
-            Ed->CurCol = Ed->Lines[Ed->CurRow].Len;
-        }
-    } else if (Scan == SCAN_RIGHT) {
-        if (Ed->CurCol < Ed->Lines[Ed->CurRow].Len) {
-            Ed->CurCol++;
-        } else if (Ed->CurRow + 1 < Ed->NumLines) {
-            Ed->CurRow++;
+    for (;;) {
+        EFI_INPUT_KEY Key;
+        EFI_STATUS    Status;
+
+        /* Spin-wait for keypress (no timer services post-ExitBootServices) */
+        do {
+            Status = Ed->TextIn->ReadKeyStroke(Ed->TextIn, &Key);
+        } while (Status == EFI_NOT_READY);
+
+        CHAR16 Uni  = Key.UnicodeChar;
+        UINT16 Scan = Key.ScanCode;
+
+        /* ?? Scan codes ?????????????????????????????????????? */
+        if (Scan == SCAN_UP) {
+            if (Ed->CurRow > 0) Ed->CurRow--;
+            EditorClampCursor(Ed);
+        } else if (Scan == SCAN_DOWN) {
+            if (Ed->CurRow + 1 < Ed->NumLines) Ed->CurRow++;
+            EditorClampCursor(Ed);
+        } else if (Scan == SCAN_LEFT) {
+            if (Ed->CurCol > 0) {
+                Ed->CurCol--;
+            } else if (Ed->CurRow > 0) {
+                Ed->CurRow--;
+                Ed->CurCol = Ed->Lines[Ed->CurRow].Len;
+            }
+        } else if (Scan == SCAN_RIGHT) {
+            if (Ed->CurCol < Ed->Lines[Ed->CurRow].Len) {
+                Ed->CurCol++;
+            } else if (Ed->CurRow + 1 < Ed->NumLines) {
+                Ed->CurRow++;
+                Ed->CurCol = 0;
+            }
+        } else if (Scan == SCAN_HOME) {
             Ed->CurCol = 0;
+        } else if (Scan == SCAN_END) {
+            Ed->CurCol = Ed->Lines[Ed->CurRow].Len;
+        } else if (Scan == SCAN_PGUP) {
+            Ed->CurRow = (Ed->CurRow > Ed->VisRows) ? Ed->CurRow - Ed->VisRows : 0;
+            EditorClampCursor(Ed);
+        } else if (Scan == SCAN_PGDN) {
+            Ed->CurRow += Ed->VisRows;
+            if (Ed->CurRow >= Ed->NumLines) Ed->CurRow = Ed->NumLines - 1;
+            EditorClampCursor(Ed);
+        } else if (Scan == SCAN_DELETE) {
+            EditorDeleteChar(Ed);
+        } else if (Scan == SCAN_ESC) {
+            /* ESC: if modified, warn; else quit */
+            if (Ed->Modified)
+                EditorSetMsg(Ed, "Unsaved changes! Use ^S to save or ^Q to force quit.");
+            else
+                break;
+
+        /* ?? Unicode / control chars ????????????????????????? */
+        } else if (Uni == CTRL_Q) {
+            break;
+        } else if (Uni == CTRL_S) {
+            EditorSaveToVfs(Ed);
+        } else if (Uni == CTRL_K) {
+            EditorKillLine(Ed);
+        } else if (Uni == CTRL_A) {
+            Ed->CurCol = 0;
+        } else if (Uni == CTRL_E) {
+            Ed->CurCol = Ed->Lines[Ed->CurRow].Len;
+        } else if (Uni == CHAR_BS) {
+            EditorBackspace(Ed);
+        } else if (Uni == CHAR_CR || Uni == CHAR_LF) {
+            EditorInsertNewline(Ed);
+        } else if (Uni >= 0x20 && Uni <= 0x7E) {
+            EditorInsertChar(Ed, (CHAR8)Uni);
         }
-    } else if (Scan == SCAN_HOME) {
-        Ed->CurCol = 0;
-    } else if (Scan == SCAN_END) {
-        Ed->CurCol = Ed->Lines[Ed->CurRow].Len;
-    } else if (Scan == SCAN_PGUP) {
-        Ed->CurRow = (Ed->CurRow > Ed->VisRows) ? Ed->CurRow - Ed->VisRows : 0;
-        EditorClampCursor(Ed);
-    } else if (Scan == SCAN_PGDN) {
-        Ed->CurRow += Ed->VisRows;
-        if (Ed->CurRow >= Ed->NumLines) Ed->CurRow = Ed->NumLines - 1;
-        EditorClampCursor(Ed);
-    } else if (Scan == SCAN_DELETE) {
-        EditorDeleteChar(Ed);
-    } else if (Scan == SCAN_ESC) {
-        if (Ed->Modified)
-            EditorSetMsg(Ed, "Unsaved changes! Use ^S to save or ^Q to force quit.");
-        else
-            return FALSE; /* quit */
 
-    /* ?? Unicode / control chars ????????????????????????? */
-    } else if (Uni == CTRL_Q) {
-        return FALSE; /* force quit */
-    } else if (Uni == CTRL_S) {
-        EditorSaveToVfs(Ed);
-    } else if (Uni == CTRL_K) {
-        EditorKillLine(Ed);
-    } else if (Uni == CTRL_A) {
-        Ed->CurCol = 0;
-    } else if (Uni == CTRL_E) {
-        Ed->CurCol = Ed->Lines[Ed->CurRow].Len;
-    } else if (Uni == CHAR_BS) {
-        EditorBackspace(Ed);
-    } else if (Uni == CHAR_CR || Uni == CHAR_LF) {
-        EditorInsertNewline(Ed);
-    } else if (Uni >= 0x20 && Uni <= 0x7E) {
-        EditorInsertChar(Ed, (CHAR8)Uni);
+        EditorDraw(Ed);
     }
-
-    return TRUE; /* stay open */
 }

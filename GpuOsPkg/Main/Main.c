@@ -21,7 +21,6 @@
 #include "Font.h"
 #include "PciGpu.h"
 #include "VFS.h"
-#include "Editor.h"
 
  /* ?? Constants ??????????????????????????????????????????????????????????? */
 #define MAX_WINDOWS     16
@@ -89,9 +88,6 @@ typedef struct {
   UINTN     CmdLen;
   BOOLEAN   ShiftHeld;
 
-  /* Editor (active when EditorMode is TRUE) */
-  BOOLEAN   EditorMode;
-  EDITOR    Ed;
 
 } TERMINAL_WINDOW;
 
@@ -192,8 +188,6 @@ STATIC VOID CmdHelp(TERMINAL_WINDOW* W) {
   TermPrintLine(W, " ver      Show OS version info", COL_TEXT_WHITE);
   TermPrintLine(W, " sysinfo  Hardware + display", COL_TEXT_WHITE);
   TermPrintLine(W, " ls       List active VFS files", COL_TEXT_WHITE);
-  TermPrintLine(W, " cat      Print file contents", COL_TEXT_WHITE);
-  TermPrintLine(W, " edit     Open file in text editor", COL_TEXT_WHITE);
   TermPrintLine(W, " cat      Print data within a file", COL_TEXT_WHITE);
 
   TermPrintLine(W, " gpu      GPU detection info", COL_TEXT_WHITE);
@@ -378,18 +372,6 @@ STATIC VOID CmdColor(TERMINAL_WINDOW* W, CONST CHAR8* Arg) {
     TermPrintLine(W, " Usage: color [1-4 | green amber cyan white]", COL_TEXT_DIM);
 }
 
-STATIC VOID CmdEdit(TERMINAL_WINDOW* W, CONST CHAR8* Arg) {
-  while (*Arg == ' ') Arg++;
-  if (*Arg == 0) {
-    TermPrintLine(W, " Usage: edit <filename>", COL_TEXT_YELLOW);
-    return;
-  }
-  EditorInit(&W->Ed, &gFb, gKeySimple, Arg);
-  W->EditorMode = TRUE;
-  AsciiSPrint(W->Title, sizeof(W->Title), "Editor: %a", Arg);
-  gDirty = TRUE;
-}
-
 STATIC VOID RunCommand(TERMINAL_WINDOW* W, CONST CHAR8* RawCmd) {
   CHAR8 PromptLine[CMD_BUF_LEN + 8];
   AsciiSPrint(PromptLine, sizeof(PromptLine), "> %a", RawCmd);
@@ -409,7 +391,6 @@ STATIC VOID RunCommand(TERMINAL_WINDOW* W, CONST CHAR8* RawCmd) {
   else if (CmdIs(RawCmd, "ls"))       CmdLs(W);
   else if (CmdIs(RawCmd, "dir"))      CmdLs(W);
   else if (CmdIs(RawCmd, "cat"))      CmdCat(W, CmdArg(RawCmd));
-  else if (CmdIs(RawCmd, "edit"))     CmdEdit(W, CmdArg(RawCmd));
 
   else if (CmdIs(RawCmd, "about"))    CmdAbout(W);
   else if (CmdIs(RawCmd, "clear")) {
@@ -527,12 +508,7 @@ STATIC VOID DrawWindow(TERMINAL_WINDOW* W) {
   if (MaxCharsPerLine == 0) MaxCharsPerLine = 1;
   if (MaxCharsPerLine >= TERM_LINE_LEN) MaxCharsPerLine = TERM_LINE_LEN - 1;
 
-  if (W->EditorMode) {
-    /* Editor owns the full window interior — update its framebuffer pointer
-       and dimensions each frame so it adapts if the window moves/resizes. */
-    W->Ed.Fb = &gFb;
-    EditorDraw(&W->Ed);
-  } else {
+  {
     /* --- SHELL MODE RUNTIME VIEW --- */
     UINTN VisLines = (UINTN)(TextBot - TY) / FONT_H;
     UINTN StartLine = W->ScrollTop;
@@ -569,7 +545,7 @@ STATIC VOID DrawWindow(TERMINAL_WINDOW* W) {
       if ((INT32)CursorX + FONT_W <= TRightX)
         GfxFillRect(&gFb, CursorX, InputY, FONT_W - 1, FONT_H - 2, COL_CURSOR);
     }
-  } /* end else (shell mode) */
+  }
 }
 
 STATIC VOID DrawTaskbar(VOID) {
@@ -752,14 +728,7 @@ STATIC VOID HandleKeySimple (VOID) {
       if (gWindows[k].Active && gWindows[k].Focused) { W = &gWindows[k]; break; }
     if (!W) continue;
 
-    if (W->EditorMode) {
-      /* Route key to editor; close editor if it signals quit */
-      if (!EditorHandleKey(&W->Ed, &Key)) {
-        W->EditorMode = FALSE;
-        AsciiSPrint(W->Title, sizeof(W->Title), "Terminal %d", (int)(W - gWindows + 1));
-        TermPrintLine(W, " Editor closed.", COL_TEXT_DIM);
-      }
-    } else {
+    {
       /* --- KEY HANDLING: CORE SHELL ROUTINE --- */
       if (Key.UnicodeChar == 0x0008) {
         if (W->CmdLen > 0) W->CmdBuf[--W->CmdLen] = 0;
