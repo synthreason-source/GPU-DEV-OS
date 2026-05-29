@@ -3,7 +3,7 @@
  *
  * Fixes & Features in this version:
  * - Real, interactive in-memory Virtual File System (VFS)
- * - Built-in text editor (`edit` command) with live text buffering
+ * - Built-in text editor (`edit` command) backed by Editor.c
  * - Live standard output stream command (`cat`)
  * - Persistent VFS file allocations during execution
  */
@@ -20,6 +20,7 @@
 #include "Graphics.h"
 #include "Font.h"
 #include "PciGpu.h"
+#include "VFS.h"
 
  /* ?? Constants ??????????????????????????????????????????????????????????? */
 #define MAX_WINDOWS     16
@@ -39,10 +40,7 @@
 #define CLOSE_BTN_W     20
 #define CLOSE_BTN_H     18
 
-/* ?? VFS Constants ???????????????????????????????????????????????????????? */
-#define MAX_FILE_NAME   32
-#define MAX_FILE_SIZE   1024
-#define MAX_FILES       16
+
 
 /* ?? Colors ??????????????????????????????????????????????????????????????? */
 #define COL_DESKTOP_TOP  0xFF0A0A14
@@ -74,14 +72,6 @@ typedef struct {
   UINT32 Color;
 } TERM_LINE;
 
-/* ?? Virtual File System Node ????????????????????????????????????????????? */
-typedef struct {
-  BOOLEAN Used;
-  CHAR8   Name[MAX_FILE_NAME];
-  CHAR8   Content[MAX_FILE_SIZE];
-  UINTN   Size;
-} VFS_FILE;
-
 /* ?? Window ??????????????????????????????????????????????????????????????? */
 typedef struct {
   BOOLEAN Active;
@@ -98,11 +88,7 @@ typedef struct {
   UINTN     CmdLen;
   BOOLEAN   ShiftHeld;
 
-  /* Text Editor Extensions */
-  BOOLEAN   EditorMode;
-  CHAR8     EditFileName[MAX_FILE_NAME];
-  CHAR8     EditBuf[MAX_FILE_SIZE];
-  UINTN     EditLen;
+
 } TERMINAL_WINDOW;
 
 /* ?? Globals ?????????????????????????????????????????????????????????????? */
@@ -121,60 +107,12 @@ STATIC UINTN                       gFrame = 0;
 STATIC BOOLEAN                     gCursorVisible = TRUE;
 STATIC BOOLEAN                     gDirty = TRUE;
 STATIC GPU_FB                      gFb;
-STATIC VFS_FILE                    gVfs[MAX_FILES];
+
 /* ?? Forward declarations ????????????????????????????????????????????????? */
 STATIC VOID TermNewline(TERMINAL_WINDOW* W);
 STATIC VOID TermPrintLine(TERMINAL_WINDOW* W, CONST CHAR8* Txt, UINT32 Color);
 STATIC VOID RunCommand(TERMINAL_WINDOW* W, CONST CHAR8* Cmd);
 STATIC VOID SpawnTerminal(VOID);
-
-/* ??????????????????????????????????????????????????????????????????????????
-   VIRTUAL FILE SYSTEM IMPLEMENTATION
-   ?????????????????????????????????????????????????????????????????????????? */
-
-STATIC VOID VfsInit(VOID) {
-  SetMem(gVfs, sizeof(gVfs), 0);
-  
-  gVfs[0].Used = TRUE;
-  AsciiStrnCpyS(gVfs[0].Name, MAX_FILE_NAME, "welcome.txt", MAX_FILE_NAME - 1);
-  AsciiStrnCpyS(gVfs[0].Content, MAX_FILE_SIZE, "Welcome to GpuOS Real-Time Shell!\nThis environment features an in-memory VFS.\nType 'help' to see system capabilities.", MAX_FILE_SIZE - 1);
-  gVfs[0].Size = AsciiStrnLenS(gVfs[0].Content, MAX_FILE_SIZE);
-
-  gVfs[1].Used = TRUE;
-  AsciiStrnCpyS(gVfs[1].Name, MAX_FILE_NAME, "notes.txt", MAX_FILE_NAME - 1);
-  AsciiStrnCpyS(gVfs[1].Content, MAX_FILE_SIZE, "- Add mouse resizing vectors\n- Test AMD RDNA graphics hardware\n- Build UEFI file extraction system", MAX_FILE_SIZE - 1);
-  gVfs[1].Size = AsciiStrnLenS(gVfs[1].Content, MAX_FILE_SIZE);
-}
-
-STATIC VFS_FILE* VfsFind(CONST CHAR8* Name) {
-  for (UINTN i = 0; i < MAX_FILES; i++) {
-    if (gVfs[i].Used && AsciiStrCmp(gVfs[i].Name, Name) == 0) {
-      return &gVfs[i];
-    }
-  }
-  return NULL;
-}
-
-STATIC BOOLEAN VfsSave(CONST CHAR8* Name, CONST CHAR8* Content, UINTN Size) {
-  VFS_FILE* File = VfsFind(Name);
-  if (!File) {
-    for (UINTN i = 0; i < MAX_FILES; i++) {
-      if (!gVfs[i].Used) {
-        File = &gVfs[i];
-        File->Used = TRUE;
-        AsciiStrnCpyS(File->Name, MAX_FILE_NAME, Name, MAX_FILE_NAME - 1);
-        break;
-      }
-    }
-  }
-  if (File) {
-    SetMem(File->Content, MAX_FILE_SIZE, 0);
-    AsciiStrnCpyS(File->Content, MAX_FILE_SIZE, Content, MAX_FILE_SIZE - 1);
-    File->Size = (Size < MAX_FILE_SIZE) ? Size : MAX_FILE_SIZE - 1;
-    return TRUE;
-  }
-  return FALSE;
-}
 
 /* ??????????????????????????????????????????????????????????????????????????
    TERMINAL OUTPUT
@@ -251,7 +189,7 @@ STATIC VOID CmdHelp(TERMINAL_WINDOW* W) {
   TermPrintLine(W, " sysinfo  Hardware + display", COL_TEXT_WHITE);
   TermPrintLine(W, " ls       List active VFS files", COL_TEXT_WHITE);
   TermPrintLine(W, " cat      Print data within a file", COL_TEXT_WHITE);
-  TermPrintLine(W, " edit     Launch interactive text editor", COL_TEXT_WHITE);
+
   TermPrintLine(W, " gpu      GPU detection info", COL_TEXT_WHITE);
   TermPrintLine(W, " mem      Memory layout report", COL_TEXT_WHITE);
   TermPrintLine(W, " uptime   Frames rendered", COL_TEXT_WHITE);
@@ -323,12 +261,11 @@ STATIC VOID CmdUptime(TERMINAL_WINDOW* W) {
 STATIC VOID CmdLs(TERMINAL_WINDOW* W) {
   TermPrintLine(W, "In-Memory Virtual Filesystem Components:", COL_TEXT_CYAN);
   TermPrintLine(W, "---------------------------------------", COL_TEXT_DIM);
-  UINTN Count = 0;
-  for (UINTN i = 0; i < MAX_FILES; i++) {
-    if (gVfs[i].Used) {
-      TermPrintFmt(W, COL_TEXT_WHITE, " %a  [%d Bytes]", gVfs[i].Name, (int)gVfs[i].Size);
-      Count++;
-    }
+  const CHAR8 *Names[VFS_MAX_FILES];
+  UINT32 Count = VfsListFiles(Names, VFS_MAX_FILES);
+  for (UINT32 i = 0; i < Count; i++) {
+    VFS_FILE *F = VfsOpen(Names[i]);
+    TermPrintFmt(W, COL_TEXT_WHITE, " %a  [%d Bytes]", Names[i], F ? (int)F->Size : 0);
   }
   if (Count == 0) {
     TermPrintLine(W, " (Empty filesystem)", COL_TEXT_DIM);
@@ -341,48 +278,27 @@ STATIC VOID CmdCat(TERMINAL_WINDOW* W, CONST CHAR8* Arg) {
     TermPrintLine(W, " Usage: cat <filename>", COL_TEXT_YELLOW);
     return;
   }
-  VFS_FILE* File = VfsFind(Arg);
+  VFS_FILE* File = VfsOpen(Arg);
   if (!File) {
     TermPrintLine(W, " Target file not found inside VFS.", COL_TEXT_RED);
     return;
   }
-  
+
   CHAR8 LineBuf[TERM_LINE_LEN];
   UINTN LineIdx = 0;
   for (UINTN i = 0; i < File->Size; i++) {
-    if (File->Content[i] == '\n' || LineIdx >= TERM_LINE_LEN - 1) {
+    if (File->Data[i] == '\n' || LineIdx >= TERM_LINE_LEN - 1) {
       LineBuf[LineIdx] = 0;
       TermPrintLine(W, LineBuf, COL_TEXT_WHITE);
       LineIdx = 0;
-    } else if (File->Content[i] != '\r') {
-      LineBuf[LineIdx++] = File->Content[i];
+    } else if (File->Data[i] != '\r') {
+      LineBuf[LineIdx++] = (CHAR8)File->Data[i];
     }
   }
   if (LineIdx > 0) {
     LineBuf[LineIdx] = 0;
     TermPrintLine(W, LineBuf, COL_TEXT_WHITE);
   }
-}
-
-STATIC VOID CmdEdit(TERMINAL_WINDOW* W, CONST CHAR8* Arg) {
-  while (*Arg == ' ') Arg++;
-  if (*Arg == 0) {
-    TermPrintLine(W, " Usage: edit <filename>", COL_TEXT_YELLOW);
-    return;
-  }
-  W->EditorMode = TRUE;
-  AsciiStrnCpyS(W->EditFileName, MAX_FILE_NAME, Arg, MAX_FILE_NAME - 1);
-  SetMem(W->EditBuf, MAX_FILE_SIZE, 0);
-
-  VFS_FILE* File = VfsFind(Arg);
-  if (File) {
-    AsciiStrnCpyS(W->EditBuf, MAX_FILE_SIZE, File->Content, MAX_FILE_SIZE - 1);
-    W->EditLen = File->Size;
-  } else {
-    W->EditLen = 0;
-  }
-  AsciiSPrint(W->Title, sizeof(W->Title), "Editor: %a", W->EditFileName);
-  gDirty = TRUE;
 }
 
 STATIC VOID CmdAbout(TERMINAL_WINDOW* W) {
@@ -475,7 +391,7 @@ STATIC VOID RunCommand(TERMINAL_WINDOW* W, CONST CHAR8* RawCmd) {
   else if (CmdIs(RawCmd, "ls"))       CmdLs(W);
   else if (CmdIs(RawCmd, "dir"))      CmdLs(W);
   else if (CmdIs(RawCmd, "cat"))      CmdCat(W, CmdArg(RawCmd));
-  else if (CmdIs(RawCmd, "edit"))     CmdEdit(W, CmdArg(RawCmd));
+
   else if (CmdIs(RawCmd, "about"))    CmdAbout(W);
   else if (CmdIs(RawCmd, "clear")) {
     SetMem(W->Lines, sizeof(W->Lines), 0);
@@ -532,7 +448,6 @@ STATIC VOID SpawnTerminal(VOID) {
   SetMem(W, sizeof(*W), 0);
   W->Active = TRUE;
   W->Focused = TRUE;
-  W->EditorMode = FALSE;
   W->X = 80 + (INT32)(gWindowCount % 6) * 30;
   W->Y = 60 + (INT32)(gWindowCount % 4) * 28;
   W->W = 560;
@@ -593,45 +508,7 @@ STATIC VOID DrawWindow(TERMINAL_WINDOW* W) {
   if (MaxCharsPerLine == 0) MaxCharsPerLine = 1;
   if (MaxCharsPerLine >= TERM_LINE_LEN) MaxCharsPerLine = TERM_LINE_LEN - 1;
 
-  if (W->EditorMode) {
-    /* --- TEXT EDITOR RUNTIME VIEW --- */
-    UINT32 DrawY = (UINT32)TY;
-    CHAR8  LineBuf[TERM_LINE_LEN];
-    UINTN  LineIdx = 0;
-
-    for (UINTN i = 0; i < W->EditLen && (INT32)DrawY + FONT_H <= TextBot; i++) {
-      if (W->EditBuf[i] == '\n' || LineIdx >= MaxCharsPerLine) {
-        LineBuf[LineIdx] = 0;
-        FontDrawString(&gFb, TX, DrawY, LineBuf, COL_TEXT_WHITE, COL_WIN_BG);
-        DrawY += FONT_H;
-        LineIdx = 0;
-        if (W->EditBuf[i] != '\n' && LineIdx >= MaxCharsPerLine) {
-          while (i < W->EditLen && W->EditBuf[i] != '\n') i++;
-        }
-      } else {
-        LineBuf[LineIdx++] = W->EditBuf[i];
-      }
-    }
-    if (LineIdx > 0 && (INT32)DrawY + FONT_H <= TextBot) {
-      LineBuf[LineIdx] = 0;
-      FontDrawString(&gFb, TX, DrawY, LineBuf, COL_TEXT_WHITE, COL_WIN_BG);
-      DrawY += FONT_H;
-    }
-
-    /* Command / Status notification pill */
-    GfxFillRect(&gFb, W->X + 1, InputY - 2, W->W - 2, FONT_H + 6, 0xFF1B1B2A);
-    GfxFillRect(&gFb, W->X + 1, InputY - 2, W->W - 2, 1, 0xFF2F2F4F);
-    FontDrawString(&gFb, TX, InputY, "[ESC] Save Workspace & Close Editor", COL_TEXT_YELLOW, 0xFF1B1B2A);
-
-    /* Text cursor location tracking */
-    if (W->Focused && gCursorVisible) {
-      if ((INT32)(TX + LineIdx * FONT_W) + FONT_W <= TRightX) {
-        UINT32 ActiveCursorY = (DrawY > (UINT32)TY) ? DrawY - FONT_H : (UINT32)TY;
-        GfxFillRect(&gFb, TX + (UINT32)(LineIdx * FONT_W), ActiveCursorY, FONT_W - 1, FONT_H - 2, COL_CURSOR);
-      }
-    }
-  } 
-  else {
+  {
     /* --- SHELL MODE RUNTIME VIEW --- */
     UINTN VisLines = (UINTN)(TextBot - TY) / FONT_H;
     UINTN StartLine = W->ScrollTop;
@@ -851,30 +728,7 @@ STATIC VOID HandleKeySimple (VOID) {
       if (gWindows[k].Active && gWindows[k].Focused) { W = &gWindows[k]; break; }
     if (!W) continue;
 
-    if (W->EditorMode) {
-      /* --- KEY HANDLING: EDITOR ROUTINE --- */
-      if (Key.ScanCode == SCAN_ESC) {
-        VfsSave(W->EditFileName, W->EditBuf, W->EditLen);
-        W->EditorMode = FALSE;
-        AsciiSPrint(W->Title, sizeof(W->Title), "Terminal %d", (int)(W - gWindows + 1));
-        TermPrintLine(W, " File system context synchronized and updated.", COL_TEXT_GREEN);
-      } else if (Key.UnicodeChar == 0x0008) {
-        if (W->EditLen > 0) {
-          W->EditBuf[--W->EditLen] = 0;
-        }
-      } else if (Key.UnicodeChar == 0x000D) {
-        if (W->EditLen < MAX_FILE_SIZE - 1) {
-          W->EditBuf[W->EditLen++] = '\n';
-          W->EditBuf[W->EditLen] = 0;
-        }
-      } else if (Key.UnicodeChar >= 0x20 && Key.UnicodeChar <= 0x7E) {
-        if (W->EditLen < MAX_FILE_SIZE - 1) {
-          W->EditBuf[W->EditLen++] = (CHAR8)Key.UnicodeChar;
-          W->EditBuf[W->EditLen] = 0;
-        }
-      }
-    } 
-    else {
+    {
       /* --- KEY HANDLING: CORE SHELL ROUTINE --- */
       if (Key.UnicodeChar == 0x0008) {
         if (W->CmdLen > 0) W->CmdBuf[--W->CmdLen] = 0;
@@ -936,9 +790,14 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     // Fallback gracefully to single-buffering if out of memory
     gHardwareVram = NULL;
   }
-  /* ????????????????????????????????????????????? */
- /* Initialize File System Layer */
-  VfsInit();
+  /* Initialize File System Layer */
+  VfsInit(gBS);
+  /* Seed initial files */
+  VFS_FILE *F;
+  F = VfsCreate("welcome.txt");
+  if (F) VfsWrite(F, (const UINT8 *)"Welcome to GpuOS Real-Time Shell!\nThis environment features an in-memory VFS.\nType 'help' to see system capabilities.", 118);
+  F = VfsCreate("notes.txt");
+  if (F) VfsWrite(F, (const UINT8 *)"- Add mouse resizing vectors\n- Test AMD RDNA graphics hardware\n- Build UEFI file extraction system", 96);
 
   EFI_GUID KeyExGuid = EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL_GUID;
   gBS->LocateProtocol(&KeyExGuid, NULL, (VOID**)&gKeyEx);
